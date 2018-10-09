@@ -2,20 +2,19 @@
 
 printf "Git pruning helper tool...\n\n"
 
-currentDir=$(pwd)
-gitDir="$currentDir/.git"
+imOnGitDir=$(git rev-parse --is-inside-work-tree)
 
-if [ ! -d "$gitDir" ]; then
-	printf "Current directory is not under GIT management!!\n\n"
+if [ ! "$imOnGitDir" = "true" ]; then
+	printf "Current directory is not under a GIT repository!!\n\n"
 	exit 1
 fi
 
 echo "(1/2) Fetching repository..."
-git --git-dir $gitDir fetch --prune
+git fetch --prune
 echo "(2/2) Deleting all stale remote-tracking branches..."
-git --git-dir $gitDir remote prune origin
+git remote prune origin
 
-orphanBranches=$(git --git-dir $gitDir branch -vv | grep -v '^*' | grep 'origin/.*: gone]\|origin/.*: desaparecido]')
+orphanBranches=$(git branch -vv | grep -v '^*' | grep 'origin/.*: gone]\|origin/.*: desaparecido]')
 
 if [ -z "$orphanBranches" ]; then
 	printf "\nThere is no branches for pruning!!\n\n"
