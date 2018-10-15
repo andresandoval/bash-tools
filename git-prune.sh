@@ -42,7 +42,7 @@ done
 
 printf "\n\nPruning repository...\n"
 echo "$orphanBranches" | awk '{print $1}' | xargs git branch -D
-printf "\n\nRepository pruned succesfully!!\n\n"
+printf "\n\nRepository pruned successfully!!\n\n"
 
 
 
