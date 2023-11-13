@@ -1,0 +1,6 @@
+alias ll='ls -al --color=auto'
+alias ssh-swap-config='sh /home/asandoval/Git/bash-tools/ssh-swap-config.sh'
+alias ssh-swap-pfpt='ssh-swap-config PFPT'
+alias ssh-swap-reg='ssh-swap-config REGULAR'
+alias to-clipboard='xclip -selection clipboard'
+alias goto-git-root='cd $(git rev-parse --show-toplevel)'
