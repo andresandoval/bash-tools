@@ -1,4 +1,4 @@
-# For terminal colors
+# Custom Primary Prompt String (PS1) -> git based PS1
 
 # get current branch in git repo
 function parse_git_branch() {
@@ -47,15 +47,3 @@ function parse_git_dirty {
 	fi
 }
 export PS1="[\u@\h \[\e[35m\]\W\[\e[m\]]\[\e[32m\]\`parse_git_branch\`\[\e[m\]\\$ " #https://ezprompt.net/
-
-
-# For golang development environment
-export GOPATH="$HOME/go"
-export GOROOT="/usr/local/go"
-export PATH="$PATH:$GOROOT/bin:$GOPATH/bin"
-
-# For flutter development environment
-export FLUTTERHOME="$HOME/Dev/flutter"
-export PATH="$PATH:$FLUTTERHOME/bin"
-export ANDROID_HOME=$HOME/Android/Sdk
-export PATH=$ANDROID_HOME/emulator:$ANDROID_HOME/tools:$ANDROID_HOME/tools/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH

@@ -1,21 +1,832 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-currentPath="$(dirname "$(realpath "$0")")"
+set -euo pipefail
 
-targetPath="$HOME/.bashrc.d"
-mkdir -p "$targetPath"
+# ==============================================================================
+# bash-tools setup
+#
+# This script manages shell configuration for a repository with this structure:
+#
+#   aliases/       *.bash files sourced from ~/.bashrc
+#   environment/   *.bash files sourced from ~/.bashrc
+#   tools/         *.sh files exposed as commands through symlinks
+#
+# Persistent state is stored only in:
+#
+#   ~/.bashrc
+#   ~/.local/bin/bash-tools
+#
+# The repository itself is treated as immutable. This script does not generate
+# files, metadata, or symlinks inside the repository.
+# ==============================================================================
 
-safeLink() {
-  sh="$currentPath/$1.sh"
-  link="$targetPath/$1"
-  if [ -L "$link" ]; then
-    unlink "$link"
-  fi
-  ln -s  "$sh" "$link"
+readonly MANAGED_START="# >>> bash-tools managed block >>>"
+readonly MANAGED_END="# <<< bash-tools managed block <<<"
+
+readonly BASHRC_FILE="${HOME}/.bashrc"
+readonly TOOLS_BIN_DIR="${HOME}/.local/bin/bash-tools"
+
+# BASH_TOOLS_HOME is the canonical repository root used by this script and by the
+# generated ~/.bashrc block. If the variable is not already defined, infer it from
+# this setup.sh location.
+if [[ -z "${BASH_TOOLS_HOME:-}" ]]; then
+    SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    export BASH_TOOLS_HOME="${SCRIPT_DIR}"
+fi
+
+readonly REPO_ROOT="${BASH_TOOLS_HOME}"
+readonly ALIASES_DIR="${REPO_ROOT}/aliases"
+readonly ENVIRONMENT_DIR="${REPO_ROOT}/environment"
+readonly TOOLS_DIR="${REPO_ROOT}/tools"
+
+# Global arrays populated during execution.
+declare -a CURRENT_ALIAS_FILES=()
+declare -a CURRENT_ENVIRONMENT_FILES=()
+declare -a CURRENT_TOOL_FILES=()
+
+declare -a PREVIOUS_INVENTORY=()
+declare -a PREVIOUS_ENABLED_SOURCES=()
+declare -a PREVIOUS_ENABLED_TOOLS=()
+
+declare -a SELECTED_SOURCES=()
+declare -a SELECTED_TOOLS=()
+
+# ------------------------------------------------------------------------------
+# Basic logging helpers.
+# ------------------------------------------------------------------------------
+
+info() {
+    printf 'INFO: %s\n' "$*"
 }
 
-# aliases
-safeLink "aliases"
+warn() {
+    printf 'WARN: %s\n' "$*" >&2
+}
 
-# environment variables
-safeLink "env"
+error() {
+    printf 'ERROR: %s\n' "$*" >&2
+}
+
+# ------------------------------------------------------------------------------
+# Dependency management.
+#
+# The script needs a checkbox-style terminal UI. It prefers whiptail and falls
+# back to dialog.
+#
+# The dependency is installed through the system package manager. Nothing is
+# installed inside the repository.
+# ------------------------------------------------------------------------------
+
+is_root() {
+    [[ "$(id -u)" -eq 0 ]]
+}
+
+sudo_command() {
+    if is_root; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        error "This script needs to install dependencies, but sudo is not available."
+        error "Install either 'whiptail' or 'dialog' manually, then rerun setup.sh."
+        exit 1
+    fi
+}
+
+install_package() {
+    local package_name="$1"
+
+    if command -v pacman >/dev/null 2>&1; then
+        sudo_command pacman -S --needed --noconfirm "${package_name}"
+        return
+    fi
+
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo_command apt-get update
+        sudo_command apt-get install -y "${package_name}"
+        return
+    fi
+
+    if command -v dnf >/dev/null 2>&1; then
+        sudo_command dnf install -y "${package_name}"
+        return
+    fi
+
+    if command -v zypper >/dev/null 2>&1; then
+        sudo_command zypper install -y "${package_name}"
+        return
+    fi
+
+    if command -v apk >/dev/null 2>&1; then
+        sudo_command apk add "${package_name}"
+        return
+    fi
+
+    error "Unsupported package manager."
+    error "Install either 'whiptail' or 'dialog' manually, then rerun setup.sh."
+    exit 1
+}
+
+install_ui_dependency() {
+    if command -v whiptail >/dev/null 2>&1 || command -v dialog >/dev/null 2>&1; then
+        return 0
+    fi
+
+    warn "No checkbox UI dependency found. Attempting to install one."
+
+    if command -v pacman >/dev/null 2>&1; then
+        # On Arch, CachyOS, and Manjaro, whiptail is provided by libnewt.
+        install_package "libnewt"
+    elif command -v apt-get >/dev/null 2>&1; then
+        install_package "whiptail"
+    elif command -v dnf >/dev/null 2>&1; then
+        install_package "newt"
+    elif command -v zypper >/dev/null 2>&1; then
+        install_package "newt"
+    elif command -v apk >/dev/null 2>&1; then
+        install_package "newt"
+    else
+        error "Unsupported package manager."
+        error "Install either 'whiptail' or 'dialog' manually, then rerun setup.sh."
+        exit 1
+    fi
+
+    if command -v whiptail >/dev/null 2>&1 || command -v dialog >/dev/null 2>&1; then
+        info "Checkbox UI dependency is available."
+        return 0
+    fi
+
+    warn "Automatic whiptail installation did not provide a usable command."
+    warn "Attempting to install dialog as fallback."
+
+    install_package "dialog"
+
+    if command -v dialog >/dev/null 2>&1; then
+        info "dialog installed successfully."
+        return 0
+    fi
+
+    error "Could not install whiptail or dialog automatically."
+    error "Install one of them manually, then rerun setup.sh."
+    exit 1
+}
+
+# ------------------------------------------------------------------------------
+# Validate expected repository structure.
+# ------------------------------------------------------------------------------
+
+validate_repository() {
+    if [[ ! -d "${REPO_ROOT}" ]]; then
+        error "BASH_TOOLS_HOME does not point to an existing directory: ${REPO_ROOT}"
+        exit 1
+    fi
+
+    for dir in "${ALIASES_DIR}" "${ENVIRONMENT_DIR}" "${TOOLS_DIR}"; do
+        if [[ ! -d "${dir}" ]]; then
+            error "Required directory does not exist: ${dir}"
+            exit 1
+        fi
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Read available files from the repository.
+#
+# Only filenames are stored in these arrays, not full paths. The folder name is
+# added later when generating managed entries such as aliases/foo.bash.
+# ------------------------------------------------------------------------------
+
+load_current_files() {
+    mapfile -t CURRENT_ALIAS_FILES < <(
+        find "${ALIASES_DIR}" -maxdepth 1 -type f -name '*.bash' -printf '%f\n' | sort
+    )
+
+    mapfile -t CURRENT_ENVIRONMENT_FILES < <(
+        find "${ENVIRONMENT_DIR}" -maxdepth 1 -type f -name '*.bash' -printf '%f\n' | sort
+    )
+
+    mapfile -t CURRENT_TOOL_FILES < <(
+        find "${TOOLS_DIR}" -maxdepth 1 -type f -name '*.sh' -printf '%f\n' | sort
+    )
+}
+
+# ------------------------------------------------------------------------------
+# Extract the existing managed block from ~/.bashrc, if present.
+# ------------------------------------------------------------------------------
+
+extract_managed_block() {
+    if [[ ! -f "${BASHRC_FILE}" ]]; then
+        return 0
+    fi
+
+    awk \
+        -v start="${MANAGED_START}" \
+        -v end="${MANAGED_END}" \
+        '
+        $0 == start { in_block = 1; next }
+        $0 == end { in_block = 0; next }
+        in_block { print }
+        ' \
+        "${BASHRC_FILE}"
+}
+
+managed_block_exists() {
+    [[ -f "${BASHRC_FILE}" ]] && grep -Fxq "${MANAGED_START}" "${BASHRC_FILE}"
+}
+
+# ------------------------------------------------------------------------------
+# Load previous state from the managed ~/.bashrc block and from existing symlinks.
+#
+# The inventory comments make it possible to detect files that are newly added or
+# removed without writing metadata into the repository.
+# ------------------------------------------------------------------------------
+
+load_previous_state() {
+    local block
+    block="$(extract_managed_block || true)"
+
+    PREVIOUS_INVENTORY=()
+    PREVIOUS_ENABLED_SOURCES=()
+    PREVIOUS_ENABLED_TOOLS=()
+
+    while IFS= read -r line; do
+        if [[ "${line}" =~ ^#\ bash-tools\ inventory:\ (.+)$ ]]; then
+            PREVIOUS_INVENTORY+=("${BASH_REMATCH[1]}")
+        fi
+
+        if [[ "${line}" =~ source\ \"\$BASH_TOOLS_HOME/(aliases|environment)/([^\"]+)\" ]]; then
+            PREVIOUS_ENABLED_SOURCES+=("${BASH_REMATCH[1]}/${BASH_REMATCH[2]}")
+        fi
+    done <<< "${block}"
+
+    if [[ -d "${TOOLS_BIN_DIR}" ]]; then
+        while IFS= read -r symlink_path; do
+            local target
+            local filename
+
+            target="$(readlink "${symlink_path}")"
+
+            # Only treat symlinks pointing into this repository's tools directory
+            # as managed by this setup script. This avoids deleting unrelated files.
+            if [[ "${target}" == "${TOOLS_DIR}/"* ]]; then
+                filename="$(basename -- "${target}")"
+                PREVIOUS_ENABLED_TOOLS+=("tools/${filename}")
+            fi
+        done < <(find "${TOOLS_BIN_DIR}" -maxdepth 1 -type l -print | sort)
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Utility membership checks.
+# ------------------------------------------------------------------------------
+
+array_contains() {
+    local needle="$1"
+    shift
+
+    local item
+    for item in "$@"; do
+        if [[ "${item}" == "${needle}" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+current_inventory() {
+    local file
+
+    for file in "${CURRENT_ALIAS_FILES[@]}"; do
+        printf 'aliases/%s\n' "${file}"
+    done
+
+    for file in "${CURRENT_ENVIRONMENT_FILES[@]}"; do
+        printf 'environment/%s\n' "${file}"
+    done
+
+    for file in "${CURRENT_TOOL_FILES[@]}"; do
+        printf 'tools/%s\n' "${file}"
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Display all available files grouped by folder.
+#
+# This is only informational. The actual selection UI is a single checklist.
+# ------------------------------------------------------------------------------
+
+print_available_files() {
+    local file
+
+    printf '\nAvailable aliases:\n'
+    if [[ "${#CURRENT_ALIAS_FILES[@]}" -eq 0 ]]; then
+        printf '  none\n'
+    else
+        for file in "${CURRENT_ALIAS_FILES[@]}"; do
+            printf '  - %s\n' "${file}"
+        done
+    fi
+
+    printf '\nAvailable environment files:\n'
+    if [[ "${#CURRENT_ENVIRONMENT_FILES[@]}" -eq 0 ]]; then
+        printf '  none\n'
+    else
+        for file in "${CURRENT_ENVIRONMENT_FILES[@]}"; do
+            printf '  - %s\n' "${file}"
+        done
+    fi
+
+    printf '\nAvailable tools:\n'
+    if [[ "${#CURRENT_TOOL_FILES[@]}" -eq 0 ]]; then
+        printf '  none\n'
+    else
+        for file in "${CURRENT_TOOL_FILES[@]}"; do
+            printf '  - %s -> %s/%s\n' "${file}" "${TOOLS_BIN_DIR}" "${file%.sh}"
+        done
+    fi
+
+    printf '\n'
+}
+
+# ------------------------------------------------------------------------------
+# Show alerts about new and removed files.
+# ------------------------------------------------------------------------------
+
+display_change_alerts() {
+    if ! managed_block_exists; then
+        return 0
+    fi
+
+    local -a current=()
+    local item
+
+    mapfile -t current < <(current_inventory)
+
+    local found_new=false
+    local found_removed=false
+
+    for item in "${current[@]}"; do
+        if ! array_contains "${item}" "${PREVIOUS_INVENTORY[@]}"; then
+            if [[ "${found_new}" == false ]]; then
+                printf '\nNewly detected files:\n'
+                found_new=true
+            fi
+
+            printf '  + %s\n' "${item}"
+        fi
+    done
+
+    for item in "${PREVIOUS_INVENTORY[@]}"; do
+        if ! array_contains "${item}" "${current[@]}"; then
+            if [[ "${found_removed}" == false ]]; then
+                printf '\nRemoved files detected:\n'
+                found_removed=true
+            fi
+
+            printf '  - %s\n' "${item}"
+        fi
+    done
+
+    if [[ "${found_new}" == true || "${found_removed}" == true ]]; then
+        printf '\n'
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Build checklist options.
+#
+# The UI is intentionally a single checklist, but the item labels include their
+# folder prefix:
+#
+#   aliases/foo.bash
+#   environment/java.bash
+#   tools/git-prune.sh
+#
+# Each option is represented as:
+#
+#   tag description default_state
+# ------------------------------------------------------------------------------
+
+build_checklist_options() {
+    local file
+    local tag
+    local state
+
+    for file in "${CURRENT_ALIAS_FILES[@]}"; do
+        tag="aliases/${file}"
+        state="OFF"
+
+        if array_contains "${tag}" "${PREVIOUS_ENABLED_SOURCES[@]}"; then
+            state="ON"
+        fi
+
+        printf '%s\t%s\t%s\n' "${tag}" "source from ~/.bashrc" "${state}"
+    done
+
+    for file in "${CURRENT_ENVIRONMENT_FILES[@]}"; do
+        tag="environment/${file}"
+        state="OFF"
+
+        if array_contains "${tag}" "${PREVIOUS_ENABLED_SOURCES[@]}"; then
+            state="ON"
+        fi
+
+        printf '%s\t%s\t%s\n' "${tag}" "source from ~/.bashrc" "${state}"
+    done
+
+    for file in "${CURRENT_TOOL_FILES[@]}"; do
+        tag="tools/${file}"
+        state="OFF"
+
+        if array_contains "${tag}" "${PREVIOUS_ENABLED_TOOLS[@]}"; then
+            state="ON"
+        fi
+
+        printf '%s\t%s\t%s\n' "${tag}" "symlink as ${file%.sh}" "${state}"
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Preferred checkbox UI using whiptail or dialog when available.
+# ------------------------------------------------------------------------------
+
+select_with_checkbox_ui() {
+    local ui_command="$1"
+
+    local -a options=()
+    local line
+    local tag
+    local description
+    local state
+
+    while IFS=$'\t' read -r tag description state; do
+        options+=("${tag}" "${description}" "${state}")
+    done < <(build_checklist_options)
+
+    if [[ "${#options[@]}" -eq 0 ]]; then
+        warn "No files found under aliases/, environment/, or tools/."
+        return 0
+    fi
+
+    local output
+
+    if [[ "${ui_command}" == "whiptail" ]]; then
+        output="$(
+            whiptail \
+                --title "bash-tools setup" \
+                --checklist "Select files to enable. Unchecked files will be disabled." \
+                25 100 15 \
+                "${options[@]}" \
+                3>&1 1>&2 2>&3
+        )"
+    else
+        output="$(
+            dialog \
+                --title "bash-tools setup" \
+                --checklist "Select files to enable. Unchecked files will be disabled." \
+                25 100 15 \
+                "${options[@]}" \
+                3>&1 1>&2 2>&3
+        )"
+    fi
+
+    parse_selected_items "${output}"
+}
+
+# ------------------------------------------------------------------------------
+# Fallback interactive selector for systems without whiptail/dialog.
+#
+# This is not as polished as a checkbox TUI, but it keeps the script dependency
+# free and still allows individual enable/disable behavior.
+# ------------------------------------------------------------------------------
+
+select_with_fallback_menu() {
+    local -a items=()
+    local -a states=()
+
+    local line
+    local tag
+    local description
+    local state
+
+    while IFS=$'\t' read -r tag description state; do
+        items+=("${tag}")
+        states+=("${state}")
+    done < <(build_checklist_options)
+
+    if [[ "${#items[@]}" -eq 0 ]]; then
+        warn "No files found under aliases/, environment/, or tools/."
+        return 0
+    fi
+
+    while true; do
+        printf '\nSelect files to enable or disable:\n\n'
+
+        local index
+        for index in "${!items[@]}"; do
+            local marker=' '
+            if [[ "${states[index]}" == "ON" ]]; then
+                marker='x'
+            fi
+
+            printf '  %2d) [%s] %s\n' "$((index + 1))" "${marker}" "${items[index]}"
+        done
+
+        printf '\nCommands:\n'
+        printf '  number  Toggle item\n'
+        printf '  a       Apply changes\n'
+        printf '  q       Quit without applying\n\n'
+
+        read -r -p "Choice: " choice
+
+        case "${choice}" in
+            a|A)
+                break
+                ;;
+            q|Q)
+                info "No changes applied."
+                exit 0
+                ;;
+            ''|*[!0-9]*)
+                warn "Invalid choice."
+                ;;
+            *)
+                local selected_index=$((choice - 1))
+
+                if (( selected_index < 0 || selected_index >= ${#items[@]} )); then
+                    warn "Invalid item number."
+                    continue
+                fi
+
+                if [[ "${states[selected_index]}" == "ON" ]]; then
+                    states[selected_index]="OFF"
+                else
+                    states[selected_index]="ON"
+                fi
+                ;;
+        esac
+    done
+
+    local selected_output=""
+    for index in "${!items[@]}"; do
+        if [[ "${states[index]}" == "ON" ]]; then
+            selected_output+="${items[index]} "
+        fi
+    done
+
+    parse_selected_items "${selected_output}"
+}
+
+# ------------------------------------------------------------------------------
+# Parse selected item output from whiptail/dialog/fallback.
+# ------------------------------------------------------------------------------
+
+parse_selected_items() {
+    local raw_output="$1"
+
+    SELECTED_SOURCES=()
+    SELECTED_TOOLS=()
+
+    # whiptail usually returns quoted items. Remove quotes to simplify parsing.
+    raw_output="${raw_output//\"/}"
+
+    local item
+    for item in ${raw_output}; do
+        case "${item}" in
+            aliases/*.bash|environment/*.bash)
+                SELECTED_SOURCES+=("${item}")
+                ;;
+            tools/*.sh)
+                SELECTED_TOOLS+=("${item}")
+                ;;
+            *)
+                warn "Ignoring unexpected selection: ${item}"
+                ;;
+        esac
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Select files to enable.
+# ------------------------------------------------------------------------------
+
+select_files() {
+    if command -v whiptail >/dev/null 2>&1; then
+        select_with_checkbox_ui "whiptail"
+    elif command -v dialog >/dev/null 2>&1; then
+        select_with_checkbox_ui "dialog"
+    else
+        warn "No supported checkbox UI tool is available."
+        warn "Expected either whiptail or dialog."
+        warn "Falling back to a basic selector."
+        select_with_fallback_menu
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Reconcile ~/.local/bin/bash-tools symlinks.
+#
+# Rules:
+#   - selected tools get symlinks
+#   - unselected tools lose managed symlinks
+#   - removed repository files lose obsolete symlinks
+#   - unrelated files/symlinks are not touched
+# ------------------------------------------------------------------------------
+
+reconcile_tool_symlinks() {
+    mkdir -p "${TOOLS_BIN_DIR}"
+
+    local symlink_path
+    local target
+
+    # Remove obsolete managed symlinks first.
+    if [[ -d "${TOOLS_BIN_DIR}" ]]; then
+        while IFS= read -r symlink_path; do
+            target="$(readlink "${symlink_path}")"
+
+            if [[ "${target}" != "${TOOLS_DIR}/"* ]]; then
+                continue
+            fi
+
+            local target_file
+            local repo_relative_tool
+
+            target_file="$(basename -- "${target}")"
+            repo_relative_tool="tools/${target_file}"
+
+            if [[ ! -f "${target}" ]] || ! array_contains "${repo_relative_tool}" "${SELECTED_TOOLS[@]}"; then
+                rm -f -- "${symlink_path}"
+                info "Removed obsolete tool symlink: ${symlink_path}"
+            fi
+        done < <(find "${TOOLS_BIN_DIR}" -maxdepth 1 -type l -print | sort)
+    fi
+
+    # Create or refresh selected tool symlinks.
+    local selected_tool
+    local filename
+    local command_name
+    local source_path
+    local destination_path
+
+    for selected_tool in "${SELECTED_TOOLS[@]}"; do
+        filename="$(basename -- "${selected_tool}")"
+        command_name="${filename%.sh}"
+
+        source_path="${TOOLS_DIR}/${filename}"
+        destination_path="${TOOLS_BIN_DIR}/${command_name}"
+
+        if [[ ! -f "${source_path}" ]]; then
+            warn "Selected tool no longer exists, skipping: ${source_path}"
+            continue
+        fi
+
+        if [[ ! -x "${source_path}" ]]; then
+            warn "Tool is not executable: ${source_path}"
+            warn "The symlink will be created, but the command may fail until the file has execute permission."
+        fi
+
+        if [[ -e "${destination_path}" && ! -L "${destination_path}" ]]; then
+            warn "Cannot create symlink because a non-symlink file already exists: ${destination_path}"
+            continue
+        fi
+
+        if [[ -L "${destination_path}" ]]; then
+            local existing_target
+            existing_target="$(readlink "${destination_path}")"
+
+            if [[ "${existing_target}" != "${source_path}" ]]; then
+                if [[ "${existing_target}" == "${TOOLS_DIR}/"* ]]; then
+                    rm -f -- "${destination_path}"
+                else
+                    warn "Cannot replace unrelated symlink: ${destination_path} -> ${existing_target}"
+                    continue
+                fi
+            fi
+        fi
+
+        ln -sfn -- "${source_path}" "${destination_path}"
+        info "Enabled tool command: ${command_name}"
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Generate the managed ~/.bashrc block.
+# ------------------------------------------------------------------------------
+
+generate_managed_block() {
+    local escaped_repo_root
+    escaped_repo_root="$(printf '%q' "${REPO_ROOT}")"
+
+    printf '%s\n' "${MANAGED_START}"
+    printf '# This block is generated by bash-tools/setup.sh.\n'
+    printf '# Manual changes inside this block may be overwritten.\n'
+    printf '\n'
+
+    printf '# Repository root used by all managed entries.\n'
+    printf 'export BASH_TOOLS_HOME=%s\n' "${escaped_repo_root}"
+    printf '\n'
+
+    printf '# Expose enabled tools as real shell commands.\n'
+    printf 'if [[ ":$PATH:" != *":$HOME/.local/bin/bash-tools:"* ]]; then\n'
+    printf '    export PATH="$HOME/.local/bin/bash-tools:$PATH"\n'
+    printf 'fi\n'
+    printf '\n'
+
+    printf '# Enabled aliases and environment files.\n'
+
+    local selected_source
+    for selected_source in "${SELECTED_SOURCES[@]}"; do
+        printf '[[ -f "$BASH_TOOLS_HOME/%s" ]] && source "$BASH_TOOLS_HOME/%s"\n' \
+            "${selected_source}" \
+            "${selected_source}"
+    done
+
+    printf '\n'
+    printf '# Known repository inventory. Used only to detect newly added or removed files.\n'
+
+    local item
+    while IFS= read -r item; do
+        printf '# bash-tools inventory: %s\n' "${item}"
+    done < <(current_inventory)
+
+    printf '%s\n' "${MANAGED_END}"
+}
+
+# ------------------------------------------------------------------------------
+# Replace only the managed ~/.bashrc block.
+#
+# If no block exists yet, append one at the end of ~/.bashrc.
+# ------------------------------------------------------------------------------
+
+update_bashrc() {
+    touch "${BASHRC_FILE}"
+
+    local temp_file
+    temp_file="$(mktemp)"
+
+    local new_block
+    new_block="$(generate_managed_block)"
+
+    if managed_block_exists; then
+        awk \
+            -v start="${MANAGED_START}" \
+            -v end="${MANAGED_END}" \
+            -v replacement="${new_block}" \
+            '
+            $0 == start {
+                print replacement
+                in_block = 1
+                next
+            }
+
+            $0 == end {
+                in_block = 0
+                next
+            }
+
+            !in_block {
+                print
+            }
+            ' \
+            "${BASHRC_FILE}" > "${temp_file}"
+    else
+        cat "${BASHRC_FILE}" > "${temp_file}"
+
+        {
+            printf '\n'
+            printf '%s\n' "${new_block}"
+        } >> "${temp_file}"
+    fi
+
+    mv -- "${temp_file}" "${BASHRC_FILE}"
+    info "Updated ${BASHRC_FILE}"
+}
+
+# ------------------------------------------------------------------------------
+# Main execution flow.
+# ------------------------------------------------------------------------------
+
+main() {
+    install_ui_dependency
+
+    validate_repository
+    mkdir -p "${TOOLS_BIN_DIR}"
+
+    load_current_files
+    load_previous_state
+
+    print_available_files
+    display_change_alerts
+
+    select_files
+
+    reconcile_tool_symlinks
+    update_bashrc
+
+    printf '\nDone.\n'
+    printf 'Open a new shell or run:\n'
+    printf '  source ~/.bashrc\n'
+}
+
+main "$@"
