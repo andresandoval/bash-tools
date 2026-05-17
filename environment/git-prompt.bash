@@ -1,49 +1,92 @@
-# Custom Primary Prompt String (PS1) -> git based PS1
+# Git-aware Bash prompt
+# Source this file from ~/.bashrc
 
-# get current branch in git repo
-function parse_git_branch() {
-	BRANCH=`git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/\1/'`
-	if [ ! "${BRANCH}" == "" ]
-	then
-		STAT=`parse_git_dirty`
-		echo "(${BRANCH}${STAT})"
-	else
-		echo ""
-	fi
+# Only configure PS1 for interactive Bash shells.
+[[ $- != *i* ]] && return
+
+parse_git_branch() {
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+
+    local branch
+    branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null \
+        || git rev-parse --short HEAD 2>/dev/null)" || return 0
+
+    local status
+    status="$(parse_git_dirty)"
+
+    printf '(%s%s)' "$branch" "$status"
 }
 
-# get current status of git repo
-function parse_git_dirty {
-	status=`git status 2>&1 | tee`
-	dirty=`echo -n "${status}" 2> /dev/null | grep "modified:" &> /dev/null; echo "$?"`
-	untracked=`echo -n "${status}" 2> /dev/null | grep "Untracked files" &> /dev/null; echo "$?"`
-	ahead=`echo -n "${status}" 2> /dev/null | grep "Your branch is ahead of" &> /dev/null; echo "$?"`
-	newfile=`echo -n "${status}" 2> /dev/null | grep "new file:" &> /dev/null; echo "$?"`
-	renamed=`echo -n "${status}" 2> /dev/null | grep "renamed:" &> /dev/null; echo "$?"`
-	deleted=`echo -n "${status}" 2> /dev/null | grep "deleted:" &> /dev/null; echo "$?"`
-	bits=''
-	if [ "${renamed}" == "0" ]; then
-		bits=">${bits}"
-	fi
-	if [ "${ahead}" == "0" ]; then
-		bits="*${bits}"
-	fi
-	if [ "${newfile}" == "0" ]; then
-		bits="+${bits}"
-	fi
-	if [ "${untracked}" == "0" ]; then
-		bits="?${bits}"
-	fi
-	if [ "${deleted}" == "0" ]; then
-		bits="x${bits}"
-	fi
-	if [ "${dirty}" == "0" ]; then
-		bits="!${bits}"
-	fi
-	if [ ! "${bits}" == "" ]; then
-		echo " ${bits}"
-	else
-		echo ""
-	fi
+parse_git_dirty() {
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+
+    local status
+    status="$(git status --porcelain=v1 --branch 2>/dev/null)" || return 0
+
+    local bits=""
+
+    # Ahead of upstream
+    # Symbol: *
+    # Meaning: local branch is ahead of the remote/upstream branch.
+    if grep -q '^## .*ahead' <<< "$status"; then
+        bits="*${bits}"
+    fi
+
+    # Renamed files
+    # Symbol: >
+    # Meaning: one or more files were renamed.
+    if grep -q '^R' <<< "$status"; then
+        bits=">${bits}"
+    fi
+
+    # New staged files
+    # Symbol: +
+    # Meaning: one or more new files are staged.
+    if grep -q '^A' <<< "$status"; then
+        bits="+${bits}"
+    fi
+
+    # Untracked files
+    # Symbol: ?
+    # Meaning: one or more untracked files exist.
+    if grep -q '^??' <<< "$status"; then
+        bits="?${bits}"
+    fi
+
+    # Deleted files
+    # Symbol: x
+    # Meaning: one or more files were deleted.
+    if grep -q '^[ MARC][D]' <<< "$status" || grep -q '^D' <<< "$status"; then
+        bits="x${bits}"
+    fi
+
+    # Modified files
+    # Symbol: !
+    # Meaning: one or more files were modified.
+    if grep -q '^[ MARC]M' <<< "$status" || grep -q '^M' <<< "$status"; then
+        bits="!${bits}"
+    fi
+
+    [[ -n "$bits" ]] && printf ' %s' "$bits"
 }
-export PS1="[\u@\h \[\e[35m\]\W\[\e[m\]]\[\e[32m\]\`parse_git_branch\`\[\e[m\]\\$ " #https://ezprompt.net/
+
+# Prompt format:
+#
+#   [user@host current-folder](branch symbols)$
+#
+# Git symbols:
+#
+#   *  branch is ahead of upstream
+#   >  renamed files
+#   +  new staged files
+#   ?  untracked files
+#   x  deleted files
+#   !  modified files
+#
+# Example:
+#
+#   [andres@pc my-project](main !?)$
+#
+# Do not export PS1. Exporting it can make sudo shells inherit a prompt
+# that references functions not loaded in the target shell.
+PS1='[\u@\h \[\e[35m\]\W\[\e[0m\]]\[\e[32m\]$(parse_git_branch)\[\e[0m\]\$ '
