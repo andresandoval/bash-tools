@@ -37,11 +37,13 @@ fi
 readonly REPO_ROOT="${BASH_TOOLS_HOME}"
 readonly ALIASES_DIR="${REPO_ROOT}/aliases"
 readonly ENVIRONMENT_DIR="${REPO_ROOT}/environment"
+readonly FUNCTIONS_DIR="${REPO_ROOT}/functions"
 readonly TOOLS_DIR="${REPO_ROOT}/tools"
 
 # Global arrays populated during execution.
 declare -a CURRENT_ALIAS_FILES=()
 declare -a CURRENT_ENVIRONMENT_FILES=()
+declare -a CURRENT_FUNCTION_FILES=()
 declare -a CURRENT_TOOL_FILES=()
 
 declare -a PREVIOUS_INVENTORY=()
@@ -181,7 +183,7 @@ validate_repository() {
         exit 1
     fi
 
-    for dir in "${ALIASES_DIR}" "${ENVIRONMENT_DIR}" "${TOOLS_DIR}"; do
+    for dir in "${ALIASES_DIR}" "${ENVIRONMENT_DIR}" "${FUNCTIONS_DIR}" "${TOOLS_DIR}"; do
         if [[ ! -d "${dir}" ]]; then
             error "Required directory does not exist: ${dir}"
             exit 1
@@ -203,6 +205,10 @@ load_current_files() {
 
     mapfile -t CURRENT_ENVIRONMENT_FILES < <(
         find "${ENVIRONMENT_DIR}" -maxdepth 1 -type f -name '*.bash' -printf '%f\n' | sort
+    )
+
+    mapfile -t CURRENT_FUNCTION_FILES < <(
+        find "${FUNCTIONS_DIR}" -maxdepth 1 -type f -name '*.bash' -printf '%f\n' | sort
     )
 
     mapfile -t CURRENT_TOOL_FILES < <(
@@ -254,7 +260,7 @@ load_previous_state() {
             PREVIOUS_INVENTORY+=("${BASH_REMATCH[1]}")
         fi
 
-        if [[ "${line}" =~ source\ \"\$BASH_TOOLS_HOME/(aliases|environment)/([^\"]+)\" ]]; then
+        if [[ "${line}" =~ source\ \"\$BASH_TOOLS_HOME/(aliases|environment|functions)/([^\"]+)\" ]]; then
             PREVIOUS_ENABLED_SOURCES+=("${BASH_REMATCH[1]}/${BASH_REMATCH[2]}")
         fi
     done <<< "${block}"
@@ -305,6 +311,10 @@ current_inventory() {
         printf 'environment/%s\n' "${file}"
     done
 
+    for file in "${CURRENT_FUNCTION_FILES[@]}"; do
+        printf 'functions/%s\n' "${file}"
+    done
+
     for file in "${CURRENT_TOOL_FILES[@]}"; do
         printf 'tools/%s\n' "${file}"
     done
@@ -333,6 +343,15 @@ print_available_files() {
         printf '  none\n'
     else
         for file in "${CURRENT_ENVIRONMENT_FILES[@]}"; do
+            printf '  - %s\n' "${file}"
+        done
+    fi
+
+    printf '\nAvailable functions:\n'
+    if [[ "${#CURRENT_FUNCTION_FILES[@]}" -eq 0 ]]; then
+        printf '  none\n'
+    else
+        for file in "${CURRENT_FUNCTION_FILES[@]}"; do
             printf '  - %s\n' "${file}"
         done
     fi
@@ -435,6 +454,17 @@ build_checklist_options() {
         printf '%s\t%s\t%s\n' "${tag}" "source from ~/.bashrc" "${state}"
     done
 
+    for file in "${CURRENT_FUNCTION_FILES[@]}"; do
+        tag="functions/${file}"
+        state="OFF"
+
+        if array_contains "${tag}" "${PREVIOUS_ENABLED_SOURCES[@]}"; then
+            state="ON"
+        fi
+
+        printf '%s\t%s\t%s\n' "${tag}" "source from ~/.bashrc" "${state}"
+    done
+
     for file in "${CURRENT_TOOL_FILES[@]}"; do
         tag="tools/${file}"
         state="OFF"
@@ -465,7 +495,7 @@ select_with_checkbox_ui() {
     done < <(build_checklist_options)
 
     if [[ "${#options[@]}" -eq 0 ]]; then
-        warn "No files found under aliases/, environment/, or tools/."
+        warn "No files found under aliases/, environment/, functions/, or tools/."
         return 0
     fi
 
@@ -594,7 +624,7 @@ parse_selected_items() {
     local item
     for item in ${raw_output}; do
         case "${item}" in
-            aliases/*.bash|environment/*.bash)
+            aliases/*.bash|environment/*.bash|functions/*.bash)
                 SELECTED_SOURCES+=("${item}")
                 ;;
             tools/*.sh)
