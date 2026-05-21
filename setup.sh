@@ -22,6 +22,7 @@ set -euo pipefail
 
 readonly MANAGED_START="# >>> bash-tools managed block >>>"
 readonly MANAGED_END="# <<< bash-tools managed block <<<"
+readonly WRAPPER_MARKER="# bash-tools managed wrapper"
 
 readonly BASHRC_FILE="${HOME}/.bashrc"
 readonly TOOLS_BIN_DIR="${HOME}/.local/bin/bash-tools"
@@ -69,108 +70,45 @@ error() {
     printf 'ERROR: %s\n' "$*" >&2
 }
 
+is_windows() {
+    [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OS:-}" == "Windows_NT" ]]
+}
+
 # ------------------------------------------------------------------------------
 # Dependency management.
 #
-# The script needs a checkbox-style terminal UI. It prefers whiptail and falls
-# back to dialog.
-#
-# The dependency is installed through the system package manager. Nothing is
-# installed inside the repository.
+# The script prefers whiptail or dialog for a checkbox-style terminal UI. If
+# neither is available, it warns with an install hint for the detected platform
+# and falls back to the built-in text selector. Nothing is installed
+# automatically.
 # ------------------------------------------------------------------------------
-
-is_root() {
-    [[ "$(id -u)" -eq 0 ]]
-}
-
-sudo_command() {
-    if is_root; then
-        "$@"
-    elif command -v sudo >/dev/null 2>&1; then
-        sudo "$@"
-    else
-        error "This script needs to install dependencies, but sudo is not available."
-        error "Install either 'whiptail' or 'dialog' manually, then rerun setup.sh."
-        exit 1
-    fi
-}
-
-install_package() {
-    local package_name="$1"
-
-    if command -v pacman >/dev/null 2>&1; then
-        sudo_command pacman -S --needed --noconfirm "${package_name}"
-        return
-    fi
-
-    if command -v apt-get >/dev/null 2>&1; then
-        sudo_command apt-get update
-        sudo_command apt-get install -y "${package_name}"
-        return
-    fi
-
-    if command -v dnf >/dev/null 2>&1; then
-        sudo_command dnf install -y "${package_name}"
-        return
-    fi
-
-    if command -v zypper >/dev/null 2>&1; then
-        sudo_command zypper install -y "${package_name}"
-        return
-    fi
-
-    if command -v apk >/dev/null 2>&1; then
-        sudo_command apk add "${package_name}"
-        return
-    fi
-
-    error "Unsupported package manager."
-    error "Install either 'whiptail' or 'dialog' manually, then rerun setup.sh."
-    exit 1
-}
 
 install_ui_dependency() {
     if command -v whiptail >/dev/null 2>&1 || command -v dialog >/dev/null 2>&1; then
         return 0
     fi
 
-    warn "No checkbox UI dependency found. Attempting to install one."
+    warn "No checkbox UI dependency found (whiptail or dialog)."
 
     if command -v pacman >/dev/null 2>&1; then
         # On Arch, CachyOS, and Manjaro, whiptail is provided by libnewt.
-        install_package "libnewt"
+        warn "To enable the checkbox UI, install it manually: sudo pacman -S libnewt"
     elif command -v apt-get >/dev/null 2>&1; then
-        install_package "whiptail"
+        warn "To enable the checkbox UI, install it manually: sudo apt-get install whiptail"
     elif command -v dnf >/dev/null 2>&1; then
-        install_package "newt"
+        warn "To enable the checkbox UI, install it manually: sudo dnf install newt"
     elif command -v zypper >/dev/null 2>&1; then
-        install_package "newt"
+        warn "To enable the checkbox UI, install it manually: sudo zypper install newt"
     elif command -v apk >/dev/null 2>&1; then
-        install_package "newt"
+        warn "To enable the checkbox UI, install it manually: sudo apk add newt"
+    elif is_windows; then
+        warn "No native whiptail/dialog package is available on Windows (Git Bash / MSYS / Cygwin)."
     else
-        error "Unsupported package manager."
-        error "Install either 'whiptail' or 'dialog' manually, then rerun setup.sh."
-        exit 1
+        warn "Install 'whiptail' or 'dialog' using your system package manager to enable the checkbox UI."
     fi
 
-    if command -v whiptail >/dev/null 2>&1 || command -v dialog >/dev/null 2>&1; then
-        info "Checkbox UI dependency is available."
-        return 0
-    fi
-
-    warn "Automatic whiptail installation did not provide a usable command."
-    warn "Attempting to install dialog as fallback."
-
-    install_package "dialog"
-
-    if command -v dialog >/dev/null 2>&1; then
-        info "dialog installed successfully."
-        return 0
-    fi
-
-    error "Could not install whiptail or dialog automatically."
-    error "Install one of them manually, then rerun setup.sh."
-    exit 1
+    info "Continuing with the built-in text-based selector."
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -266,19 +204,17 @@ load_previous_state() {
     done <<< "${block}"
 
     if [[ -d "${TOOLS_BIN_DIR}" ]]; then
-        while IFS= read -r symlink_path; do
-            local target
+        while IFS= read -r entry_path; do
+            local managed_target
             local filename
 
-            target="$(readlink "${symlink_path}")"
+            managed_target="$(read_managed_target "${entry_path}")"
 
-            # Only treat symlinks pointing into this repository's tools directory
-            # as managed by this setup script. This avoids deleting unrelated files.
-            if [[ "${target}" == "${TOOLS_DIR}/"* ]]; then
-                filename="$(basename -- "${target}")"
+            if [[ -n "${managed_target}" ]]; then
+                filename="$(basename -- "${managed_target}")"
                 PREVIOUS_ENABLED_TOOLS+=("tools/${filename}")
             fi
-        done < <(find "${TOOLS_BIN_DIR}" -maxdepth 1 -type l -print | sort)
+        done < <(find "${TOOLS_BIN_DIR}" -maxdepth 1 \( -type l -o -type f \) -print | sort)
     fi
 }
 
@@ -655,44 +591,91 @@ select_files() {
 }
 
 # ------------------------------------------------------------------------------
-# Reconcile ~/.local/bin/bash-tools symlinks.
+# Reconcile ~/.local/bin/bash-tools entries.
+#
+# On Linux/macOS, each enabled tool is exposed as a symlink. On Windows (Git
+# Bash / MSYS / Cygwin), where ln -s often silently copies files, a small bash
+# wrapper script is written instead. The wrapper carries a marker comment plus
+# a "# Source:" line so subsequent runs can identify and clean up entries this
+# script previously created.
 #
 # Rules:
-#   - selected tools get symlinks
-#   - unselected tools lose managed symlinks
-#   - removed repository files lose obsolete symlinks
+#   - selected tools get an entry (symlink or wrapper)
+#   - unselected tools lose managed entries
+#   - removed repository files lose obsolete entries
 #   - unrelated files/symlinks are not touched
 # ------------------------------------------------------------------------------
+
+# Returns the source path inside TOOLS_DIR if the given path is a managed entry
+# (either a symlink we created or a wrapper script we wrote). Prints nothing
+# when the path is not managed by this script.
+read_managed_target() {
+    local path="$1"
+
+    if [[ -L "${path}" ]]; then
+        local link_target
+        link_target="$(readlink "${path}")"
+        if [[ "${link_target}" == "${TOOLS_DIR}/"* ]]; then
+            printf '%s\n' "${link_target}"
+        fi
+        return 0
+    fi
+
+    if [[ -f "${path}" ]]; then
+        if grep -Fq "${WRAPPER_MARKER}" "${path}" 2>/dev/null; then
+            local source_line
+            source_line="$(grep -m1 '^# Source: ' "${path}" 2>/dev/null || true)"
+            source_line="${source_line#"# Source: "}"
+            if [[ "${source_line}" == "${TOOLS_DIR}/"* ]]; then
+                printf '%s\n' "${source_line}"
+            fi
+        fi
+    fi
+}
+
+create_tool_wrapper() {
+    local source_path="$1"
+    local destination_path="$2"
+
+    cat > "${destination_path}" <<WRAPPER_EOF
+#!/usr/bin/env bash
+${WRAPPER_MARKER}
+# Source: ${source_path}
+exec bash "${source_path}" "\$@"
+WRAPPER_EOF
+
+    chmod +x "${destination_path}" 2>/dev/null || true
+}
 
 reconcile_tool_symlinks() {
     mkdir -p "${TOOLS_BIN_DIR}"
 
-    local symlink_path
-    local target
+    local entry_path
+    local managed_target
 
-    # Remove obsolete managed symlinks first.
+    # Remove obsolete managed entries first.
     if [[ -d "${TOOLS_BIN_DIR}" ]]; then
-        while IFS= read -r symlink_path; do
-            target="$(readlink "${symlink_path}")"
+        while IFS= read -r entry_path; do
+            managed_target="$(read_managed_target "${entry_path}")"
 
-            if [[ "${target}" != "${TOOLS_DIR}/"* ]]; then
+            if [[ -z "${managed_target}" ]]; then
                 continue
             fi
 
             local target_file
             local repo_relative_tool
 
-            target_file="$(basename -- "${target}")"
+            target_file="$(basename -- "${managed_target}")"
             repo_relative_tool="tools/${target_file}"
 
-            if [[ ! -f "${target}" ]] || ! array_contains "${repo_relative_tool}" "${SELECTED_TOOLS[@]}"; then
-                rm -f -- "${symlink_path}"
-                info "Removed obsolete tool symlink: ${symlink_path}"
+            if [[ ! -f "${managed_target}" ]] || ! array_contains "${repo_relative_tool}" "${SELECTED_TOOLS[@]}"; then
+                rm -f -- "${entry_path}"
+                info "Removed obsolete tool entry: ${entry_path}"
             fi
-        done < <(find "${TOOLS_BIN_DIR}" -maxdepth 1 -type l -print | sort)
+        done < <(find "${TOOLS_BIN_DIR}" -maxdepth 1 \( -type l -o -type f \) -print | sort)
     fi
 
-    # Create or refresh selected tool symlinks.
+    # Create or refresh selected tool entries.
     local selected_tool
     local filename
     local command_name
@@ -713,30 +696,30 @@ reconcile_tool_symlinks() {
 
         if [[ ! -x "${source_path}" ]]; then
             warn "Tool is not executable: ${source_path}"
-            warn "The symlink will be created, but the command may fail until the file has execute permission."
+            warn "The command may fail until the file has execute permission."
         fi
 
-        if [[ -e "${destination_path}" && ! -L "${destination_path}" ]]; then
-            warn "Cannot create symlink because a non-symlink file already exists: ${destination_path}"
-            continue
-        fi
+        # If something already exists at the destination, only replace it when
+        # we recognize it as one of our own managed entries.
+        if [[ -e "${destination_path}" || -L "${destination_path}" ]]; then
+            local existing_managed_target
+            existing_managed_target="$(read_managed_target "${destination_path}")"
 
-        if [[ -L "${destination_path}" ]]; then
-            local existing_target
-            existing_target="$(readlink "${destination_path}")"
-
-            if [[ "${existing_target}" != "${source_path}" ]]; then
-                if [[ "${existing_target}" == "${TOOLS_DIR}/"* ]]; then
-                    rm -f -- "${destination_path}"
-                else
-                    warn "Cannot replace unrelated symlink: ${destination_path} -> ${existing_target}"
-                    continue
-                fi
+            if [[ -z "${existing_managed_target}" ]]; then
+                warn "Cannot replace unrelated file at: ${destination_path}"
+                continue
             fi
+
+            rm -f -- "${destination_path}"
         fi
 
-        ln -sfn -- "${source_path}" "${destination_path}"
-        info "Enabled tool command: ${command_name}"
+        if is_windows; then
+            create_tool_wrapper "${source_path}" "${destination_path}"
+            info "Enabled tool command (wrapper): ${command_name}"
+        else
+            ln -sfn -- "${source_path}" "${destination_path}"
+            info "Enabled tool command: ${command_name}"
+        fi
     done
 }
 
