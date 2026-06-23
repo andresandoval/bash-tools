@@ -88,17 +88,21 @@ check_deps() {
 }
 
 # --- Clipboard helpers (only used in clipboard mode) ------------------------
-clipboard_cmd() {
+# powershell.exe writes stdout in the legacy console code page, which corrupts
+# non-ASCII text (nbsp, em dashes, curly quotes). Forcing UTF-8 output fixes it.
+PS_UTF8='[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; '
+
+read_clipboard_text() {
 	if command -v powershell.exe >/dev/null 2>&1; then
-		echo "powershell.exe -NoProfile -Command Get-Clipboard"
+		powershell.exe -NoProfile -Command "${PS_UTF8}Get-Clipboard" 2>/dev/null
 	elif command -v pbpaste >/dev/null 2>&1; then
-		echo "pbpaste"
+		pbpaste
 	elif command -v wl-paste >/dev/null 2>&1; then
-		echo "wl-paste"
+		wl-paste
 	elif command -v xclip >/dev/null 2>&1; then
-		echo "xclip -selection clipboard -o"
+		xclip -selection clipboard -o
 	elif command -v xsel >/dev/null 2>&1; then
-		echo "xsel -b"
+		xsel -b
 	else
 		return 1
 	fi
@@ -106,7 +110,7 @@ clipboard_cmd() {
 
 read_clipboard_html() {
 	if command -v powershell.exe >/dev/null 2>&1; then
-		powershell.exe -NoProfile -Command "Get-Clipboard -TextFormatType Html" 2>/dev/null
+		powershell.exe -NoProfile -Command "${PS_UTF8}Get-Clipboard -TextFormatType Html" 2>/dev/null
 	elif command -v wl-paste >/dev/null 2>&1; then
 		wl-paste -t text/html 2>/dev/null
 	elif command -v xclip >/dev/null 2>&1; then
@@ -322,13 +326,12 @@ else
 	if not_blank "$html"; then
 		content="$(printf '%s' "$html" | python3 "$LIB/html2md.py")"
 		echo "(converted rich clipboard HTML to Markdown)"
+	elif content="$(read_clipboard_text)"; then
+		: # plain text (may be empty → caught by the not_blank check below)
 	else
-		if ! cmd="$(clipboard_cmd)"; then
-			echo "Error: no clipboard tool found. Install xclip or wl-clipboard," >&2
-			echo "       or pass a file: add-notes PATH --from FILE" >&2
-			exit 1
-		fi
-		content="$(eval "$cmd" 2>/dev/null || true)"
+		echo "Error: no clipboard tool found. Install xclip or wl-clipboard," >&2
+		echo "       or pass a file: add-notes PATH --from FILE" >&2
+		exit 1
 	fi
 fi
 

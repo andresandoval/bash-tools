@@ -17,9 +17,11 @@ import re
 import sys
 from datetime import datetime
 
-# [1](https://...) style citation links the AI tool appends. Match a bracketed
-# number followed by a parenthesized URL; leave ordinary [text](url) links alone.
-CITATION_RE = re.compile(r"\[\d+\]\(https?://[^)]+\)")
+# Citation/reference markers whose visible label is just a number — either
+# [1](url) (AI-tool style) or [[1]](#cite_note-1) (Wikipedia superscript, whose
+# link text is literally "[1]"), pointing at a URL or an in-page anchor. Ordinary
+# [text](url) links are left alone.
+CITATION_RE = re.compile(r"\[(?:\[\d+\]|\d+)\]\((?:https?://|#)[^)]*\)")
 
 # A line that is only a run of = or - (an AI section separator), optionally with
 # a trailing backslash / whitespace.
@@ -34,6 +36,7 @@ def clean_body(text: str) -> str:
     """Apply the deterministic cleanup rules to note body text."""
     text = text.lstrip("﻿")  # drop a leading BOM if present
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace(" ", " ")  # non-breaking spaces -> regular spaces
 
     out_lines = []
     in_fence = False

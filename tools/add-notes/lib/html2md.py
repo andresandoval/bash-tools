@@ -186,7 +186,8 @@ class MarkdownConverter(HTMLParser):
 
 
 def main() -> int:
-    html = extract_fragment(sys.stdin.read())
+    html = sys.stdin.read().lstrip("﻿")  # drop a leading BOM if present
+    html = extract_fragment(html)
     parser = MarkdownConverter()
     parser.feed(html)
     parser.close()
