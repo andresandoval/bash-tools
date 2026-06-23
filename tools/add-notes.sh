@@ -41,9 +41,10 @@ Options:
   -h, --help   Show this help.
 
 Behavior:
-  - The current directory is the notes repo. If it is not a git repo you are
-    asked to initialize one (skip the prompt with ADD_NOTES_INIT=yes|no); if it
-    already is, the working tree must be clean.
+  - The current directory is the notes repo and must be the git repository root
+    (running from a subdirectory exits with an error). If it is not a git repo
+    you are asked to initialize one (skip the prompt with ADD_NOTES_INIT=yes|no);
+    if it already is, the working tree must be clean.
   - A self-contained search UI is deployed/refreshed in ./.web (open index.html).
   - If today's file already exists you are asked to override, append, or cancel
     (override non-interactively with ADD_NOTES_ON_EXISTING=override|append|cancel).
@@ -108,9 +109,20 @@ slugify() {
 	echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
 }
 
-# --- Git seeding: ensure the cwd is a clean notes repo ----------------------
+# --- Git seeding: ensure the cwd is a clean notes repo at its root ----------
 ensure_notes_repo() {
 	if git -C "$NOTES_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		# Must be run from the repository root, not a subdirectory.
+		local toplevel here
+		toplevel="$(git -C "$NOTES_ROOT" rev-parse --show-toplevel)"
+		here="$(cd "$NOTES_ROOT" && pwd -P)"
+		if [ "$here" != "$toplevel" ]; then
+			echo "Error: add-notes must be run from the root of the git repository." >&2
+			echo "       Repository root: $toplevel" >&2
+			echo "       Current dir:     $here" >&2
+			echo "       cd to the repository root and try again." >&2
+			exit 1
+		fi
 		if [ -n "$(git -C "$NOTES_ROOT" status --porcelain)" ]; then
 			echo "Error: git working tree is not clean — commit or stash first." >&2
 			echo "       (add-notes commits each note on its own, so the tree must start clean.)" >&2

@@ -152,9 +152,10 @@ add-notes "GarageHub" "Daily Standup"                   # from the clipboard
 - Notes are saved to `./<project>/<meeting>/<date>.md`, cleaned of AI cruft, with
   YAML frontmatter. **Formatted (HTML) clipboard** content is converted to Markdown
   automatically (clipboard2markdown-style); otherwise plain text is used.
-- The current directory becomes the notes repo: it is `git init`-ed on demand (and
-  must have a clean working tree if already tracked). Each note is committed; if a
-  remote is configured it is pushed too.
+- The current directory becomes the notes repo: it must be the **git repository
+  root** (running from a subdirectory exits with an error). It is `git init`-ed on
+  demand, and must have a clean working tree if already tracked. Each note is
+  committed; if a remote is configured it is pushed too.
 - A self-contained search/browse UI is deployed to `./.web` (open `index.html` — no
   server needed). It is refreshed automatically when the tool is updated, tracked via
   `.web/.tool-version`.
