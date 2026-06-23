@@ -33,7 +33,8 @@ bash-tools/
 │   ├── golang-env.bash
 │   └── git-prompt.bash
 ├── functions/                # *.bash -- sourced from ~/.bashrc (shell functions)
-│   └── git-navigation.bash
+│   ├── git-navigation.bash
+│   └── add-notes-completion.bash
 └── tools/                    # *.sh -- exposed as commands on your PATH
     ├── age-pdf.sh
     ├── appimage-install.sh
@@ -41,8 +42,14 @@ bash-tools/
     ├── compare-copy.sh
     ├── copy-realpath.sh
     ├── git-prune-local.sh
-    └── nvidia-prime-run.sh
+    ├── nvidia-prime-run.sh
+    ├── add-notes.sh
+    └── add-notes/            # support assets for add-notes (lib/, web/ — not a command)
 ```
+
+> A `tools/<name>/` subdirectory (like `tools/add-notes/`) is **not** scanned as a
+> command — `setup.sh` only exposes top-level `tools/*.sh` files. Such directories are
+> the place to keep a multi-file tool's helper scripts and assets.
 
 Files in `aliases/`, `environment/`, and `functions/` are **sourced** into the shell.
 Files in `tools/` become **commands**: the command name is the filename with `.sh`
@@ -129,8 +136,30 @@ Each enabled tool becomes a command named after its file (minus `.sh`).
 | `copy-realpath` | `tools/copy-realpath.sh` | Copy a file's absolute path to the clipboard (`xclip`) |
 | `git-prune-local` | `tools/git-prune-local.sh` | Prune local Git branches (`--force`/`-f` to force-delete) |
 | `nvidia-prime-run` | `tools/nvidia-prime-run.sh` | Run a command on the NVIDIA GPU via PRIME render offload |
+| `add-notes` | `tools/add-notes.sh` | Capture meeting notes as clean Markdown in the current dir, with a built-in search UI and git auto-commit |
 
 Many tools provide a usage block; run them with `--help` where supported.
+
+### `add-notes` — meeting notes in any directory
+
+Run `add-notes` inside any directory to turn it into a notes repository:
+
+```bash
+add-notes "GarageHub" "Daily Standup" ./raw-notes.md   # from a file
+add-notes "GarageHub" "Daily Standup"                   # from the clipboard
+```
+
+- Notes are saved to `./<project>/<meeting>/<date>.md`, cleaned of AI cruft, with
+  YAML frontmatter. **Formatted (HTML) clipboard** content is converted to Markdown
+  automatically (clipboard2markdown-style); otherwise plain text is used.
+- The current directory becomes the notes repo: it is `git init`-ed on demand (and
+  must have a clean working tree if already tracked). Each note is committed; if a
+  remote is configured it is pushed too.
+- A self-contained search/browse UI is deployed to `./.web` (open `index.html` — no
+  server needed). It is refreshed automatically when the tool is updated, tracked via
+  `.web/.tool-version`.
+- Tab-completion (projects/meetings in the current directory) is enabled automatically
+  through `functions/add-notes-completion.bash`. Requires `python3` and `git`.
 
 ## ⚙️ 6. Aliases, Environment & Functions
 
@@ -142,6 +171,7 @@ Many tools provide a usage block; run them with `--help` where supported.
 | `environment/golang-env.bash` | environment | Go env (`GOPATH`, `GOROOT`) and PATH |
 | `environment/git-prompt.bash` | environment | Two-line, Git-aware Catppuccin Macchiato prompt |
 | `functions/git-navigation.bash` | function | `goto-git-root` -- cd to the current repo root |
+| `functions/add-notes-completion.bash` | function | Tab-completion for the `add-notes` command (cwd-aware) |
 
 ## 📝 7. Adding New Content
 
@@ -176,3 +206,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | Date | Change |
 |------|--------|
 | _Initial_ | Setup script, shell config files, and command-line tools |
+| 2026-06-23 | Add `add-notes` meeting-notes tool (+ `add-notes/` assets, completion function) |

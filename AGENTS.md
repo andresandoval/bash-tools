@@ -94,6 +94,7 @@ After running, open a new shell or `source ~/.bashrc`.
 | `environment/golang-env.bash` | sourced | Go env (`GOPATH`, `GOROOT`) + PATH |
 | `environment/git-prompt.bash` | sourced | two-line Catppuccin git-aware prompt |
 | `functions/git-navigation.bash` | sourced | `goto-git-root` function |
+| `functions/add-notes-completion.bash` | sourced | tab-completion for the `add-notes` command |
 | `tools/age-pdf.sh` | command `age-pdf` | age a PDF to look like an old scan |
 | `tools/appimage-install.sh` | command `appimage-install` | install an AppImage as a desktop app |
 | `tools/cleanup-old-kernels.sh` | command `cleanup-old-kernels` | remove old kernels (dnf) |
@@ -101,3 +102,14 @@ After running, open a new shell or `source ~/.bashrc`.
 | `tools/copy-realpath.sh` | command `copy-realpath` | copy a file's absolute path to clipboard |
 | `tools/git-prune-local.sh` | command `git-prune-local` | prune local git branches |
 | `tools/nvidia-prime-run.sh` | command `nvidia-prime-run` | run a command on the NVIDIA GPU (PRIME offload) |
+| `tools/add-notes.sh` | command `add-notes` | capture meeting notes as clean Markdown + search UI, in any dir |
+| `tools/add-notes/` | assets (not a command) | `lib/` Python helpers + `web/` UI template for `add-notes` |
+
+### Multi-file tools
+
+`setup.sh` only exposes top-level `tools/*.sh` files, so a tool that needs more than one
+file keeps its helpers in a sibling `tools/<name>/` directory (e.g. `tools/add-notes/`),
+which the scanner ignores. The entry script resolves its own real path with
+`readlink -f "${BASH_SOURCE[0]}"` (so it works through the installed symlink) and reads
+its assets from there. Such a tool still writes nothing into this repo — it operates on
+the user's working directory only.
