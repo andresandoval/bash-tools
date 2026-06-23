@@ -1,0 +1,178 @@
+# 🧰 bash-tools
+
+**A personal shell-configuration manager: pick the aliases, environment files, functions, and command-line tools you want, and wire them into your shell without ever touching the repository.**
+
+## 📘 1. Overview
+
+`bash-tools` collects four kinds of shell content into a single repository and exposes a
+selectable subset of them to your interactive Bash shell. A single script, `setup.sh`,
+scans the repository, shows a checklist of everything available, and reconciles your
+selection into `~/.bashrc` and `~/.local/bin/bash-tools/`.
+
+| Aspect | Detail |
+|--------|--------|
+| Shell | Bash |
+| Entry point | `./setup.sh` |
+| State locations | `~/.bashrc` (managed block), `~/.local/bin/bash-tools/` (tool commands) |
+| Repository mutation | None -- the repo is treated as immutable |
+| Dependencies | Optional `whiptail` or `dialog`; falls back to a built-in text selector |
+| Platforms | Linux, macOS, Windows (Git Bash / MSYS / Cygwin) |
+
+For agent-specific contributor guidance, see [`AGENTS.md`](AGENTS.md).
+
+## 📦 2. Repository Structure
+
+```
+bash-tools/
+├── setup.sh                  # the only entry point; installs and reconciles everything
+├── aliases/                  # *.bash -- sourced from ~/.bashrc
+│   ├── common-alias.bash
+│   └── gnome-alias.bash
+├── environment/              # *.bash -- sourced from ~/.bashrc (PATH / env exports)
+│   ├── flutter-env.bash
+│   ├── golang-env.bash
+│   └── git-prompt.bash
+├── functions/                # *.bash -- sourced from ~/.bashrc (shell functions)
+│   └── git-navigation.bash
+└── tools/                    # *.sh -- exposed as commands on your PATH
+    ├── age-pdf.sh
+    ├── appimage-install.sh
+    ├── cleanup-old-kernels.sh
+    ├── compare-copy.sh
+    ├── copy-realpath.sh
+    ├── git-prune-local.sh
+    └── nvidia-prime-run.sh
+```
+
+Files in `aliases/`, `environment/`, and `functions/` are **sourced** into the shell.
+Files in `tools/` become **commands**: the command name is the filename with `.sh`
+stripped (for example, `tools/git-prune-local.sh` becomes the `git-prune-local` command).
+
+## 🏗️ 3. How It Works
+
+```mermaid
+flowchart TD
+    A["./setup.sh"] --> B[Check for whiptail / dialog]
+    B -->|found| C[Checklist UI]
+    B -->|missing| D[Built-in text selector]
+    C --> E[User selects files]
+    D --> E
+    E --> F[Reconcile ~/.local/bin/bash-tools]
+    F -->|Linux / macOS| G[Create symlinks into tools/]
+    F -->|Windows| H[Write wrapper scripts]
+    E --> I[Rewrite managed block in ~/.bashrc]
+    I --> J[source lines + BASH_TOOLS_HOME + PATH + inventory]
+    G --> K[Done -- open a new shell]
+    H --> K
+    J --> K
+```
+
+Key behaviors:
+
+- **The repository is immutable.** `setup.sh` never writes files, metadata, or symlinks
+  inside the repo. All persistent state lives in `~/.bashrc` and `~/.local/bin/bash-tools/`.
+- **`BASH_TOOLS_HOME`** is the canonical repository root. If unset, it is inferred from
+  the location of `setup.sh`, then exported into the managed `~/.bashrc` block.
+- **Managed block.** The block in `~/.bashrc` is delimited by
+  `# >>> bash-tools managed block >>>` and `# <<< bash-tools managed block <<<`. It is
+  regenerated on every run; manual edits inside it are overwritten.
+- **Tools: symlink vs wrapper.** On Linux/macOS each enabled tool is a symlink into
+  `tools/`. On Windows shells, where `ln -s` often silently copies, a small wrapper
+  script is written instead.
+- **Reconciliation.** Each run re-enables selected items, removes deselected ones, and
+  prunes entries for files deleted from the repo. Unrelated entries are left untouched.
+- **Inventory.** Known files are recorded as `# bash-tools inventory:` comments so the
+  next run can report newly added or removed files.
+
+## 🚀 4. Installation & Usage
+
+```bash
+git clone <repo-url> bash-tools
+cd bash-tools
+./setup.sh
+```
+
+In the selector, check the files you want enabled and confirm. Then start a new shell or
+reload the current one:
+
+```bash
+source ~/.bashrc
+```
+
+Re-run `./setup.sh` any time you add files, remove files, or want to change the selection.
+It is idempotent.
+
+### Optional checklist UI
+
+For a checkbox-style terminal UI, install `whiptail` or `dialog`. `setup.sh` never
+installs packages automatically; it prints a per-distro hint and otherwise uses the
+built-in text selector.
+
+| Package manager | Install command |
+|-----------------|-----------------|
+| pacman (Arch / CachyOS / Manjaro) | `sudo pacman -S libnewt` |
+| apt | `sudo apt-get install whiptail` |
+| dnf | `sudo dnf install newt` |
+| zypper | `sudo zypper install newt` |
+| apk | `sudo apk add newt` |
+
+## 🔧 5. Tools
+
+Each enabled tool becomes a command named after its file (minus `.sh`).
+
+| Command | Source | Purpose |
+|---------|--------|---------|
+| `age-pdf` | `tools/age-pdf.sh` | Age a PDF so it looks like an old scan, photocopy, or low-quality B&W document |
+| `appimage-install` | `tools/appimage-install.sh` | Install an AppImage as a desktop application (user or system scope) |
+| `cleanup-old-kernels` | `tools/cleanup-old-kernels.sh` | Remove old kernels via `dnf`, keeping the latest |
+| `compare-copy` | `tools/compare-copy.sh` | Compare a file copy between a target and source directory |
+| `copy-realpath` | `tools/copy-realpath.sh` | Copy a file's absolute path to the clipboard (`xclip`) |
+| `git-prune-local` | `tools/git-prune-local.sh` | Prune local Git branches (`--force`/`-f` to force-delete) |
+| `nvidia-prime-run` | `tools/nvidia-prime-run.sh` | Run a command on the NVIDIA GPU via PRIME render offload |
+
+Many tools provide a usage block; run them with `--help` where supported.
+
+## ⚙️ 6. Aliases, Environment & Functions
+
+| File | Type | Provides |
+|------|------|----------|
+| `aliases/common-alias.bash` | aliases | `ll`, `to-clipboard` |
+| `aliases/gnome-alias.bash` | aliases | `gedit` (maps to `gnome-text-editor`) |
+| `environment/flutter-env.bash` | environment | Flutter + Android SDK env vars and PATH |
+| `environment/golang-env.bash` | environment | Go env (`GOPATH`, `GOROOT`) and PATH |
+| `environment/git-prompt.bash` | environment | Two-line, Git-aware Catppuccin Macchiato prompt |
+| `functions/git-navigation.bash` | function | `goto-git-root` -- cd to the current repo root |
+
+## 📝 7. Adding New Content
+
+**An alias, environment file, or function:**
+
+1. Drop a `*.bash` file into `aliases/`, `environment/`, or `functions/`.
+2. Run `./setup.sh` and check the new file.
+
+**A tool / command:**
+
+1. Add a `*.sh` file to `tools/` with a `#!/usr/bin/env bash` shebang.
+2. Make it executable: `chmod +x tools/your-tool.sh` (commit the executable bit).
+3. Run `./setup.sh` and select it. The command name is the filename minus `.sh`.
+
+Conventions for new scripts: start with `#!/usr/bin/env bash` and `set -euo pipefail`,
+provide a usage/help block, and commit using Conventional Commits with a scope
+(for example, `feat(git-prompt): ...`, `chore(setup): ...`).
+
+## 🔍 8. Troubleshooting
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Tool command "not found" | New shell not started, or PATH not refreshed | Run `source ~/.bashrc` or open a new shell |
+| Command runs the wrong/old script | Tool not re-selected after rename | Re-run `./setup.sh` and confirm the selection |
+| "Tool is not executable" warning | Missing execute bit on a `tools/*.sh` file | `chmod +x tools/<name>.sh`, then re-run setup |
+| No checkbox UI appears | `whiptail`/`dialog` not installed | Install one (see section 4) or use the text selector |
+| On Windows, tools are copies not links | `ln -s` copies on Git Bash/MSYS/Cygwin | Expected -- setup writes wrapper scripts instead |
+| Changes to the `~/.bashrc` block vanish | The managed block is regenerated each run | Edit the source files in the repo, not the block |
+
+## 📜 9. Changelog
+
+| Date | Change |
+|------|--------|
+| _Initial_ | Setup script, shell config files, and command-line tools |
