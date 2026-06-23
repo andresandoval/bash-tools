@@ -102,7 +102,7 @@ After running, open a new shell or `source ~/.bashrc`.
 | `tools/copy-realpath.sh` | command `copy-realpath` | copy a file's absolute path to clipboard |
 | `tools/git-prune-local.sh` | command `git-prune-local` | prune local git branches |
 | `tools/nvidia-prime-run.sh` | command `nvidia-prime-run` | run a command on the NVIDIA GPU (PRIME offload) |
-| `tools/add-notes.sh` | command `add-notes` | capture meeting notes as clean Markdown + search UI, in any dir |
+| `tools/add-notes.sh` | command `add-notes` | capture meeting notes as clean Markdown under a freeform path + tree search UI, in any dir |
 | `tools/add-notes/` | assets (not a command) | `lib/` Python helpers + `web/` UI template for `add-notes` |
 
 ### Multi-file tools

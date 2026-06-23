@@ -1,54 +1,50 @@
 #!/usr/bin/env bash
 #
-# Tab-completion for the `add-notes` command. Completion is cwd-aware: projects
-# and meetings are completed from the current directory (the active notes repo),
-# so it works in any directory you take notes in.
-
-_add_notes_slug() {
-	echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
-}
-
-_add_notes_dirs() {
-	# Subdirectories of $1, one per line. The */ glob already skips hidden dirs
-	# like .git and .web.
-	(cd "$1" 2>/dev/null || return 0
-	 for d in */; do
-		[ -d "$d" ] || continue
-		echo "${d%/}"
-	 done)
-}
+# Tab-completion for the `add-notes` command. The PATH argument is completed as a
+# multi-level directory path under the current directory (the active notes repo),
+# so you can drill through your structure with Tab. Works in any directory.
 
 _add_notes_complete() {
-	local cur="${COMP_WORDS[COMP_CWORD]}"
+	local cur prev
+	cur="${COMP_WORDS[COMP_CWORD]}"
+	prev="${COMP_WORDS[COMP_CWORD - 1]}"
 	COMPREPLY=()
 
-	if [[ "$cur" == -* ]]; then
-		COMPREPLY=($(compgen -W "--no-push --version --help" -- "$cur"))
+	# After --from, complete a source file path (default file completion).
+	if [ "$prev" = "--from" ]; then
+		COMPREPLY=($(compgen -f -- "$cur"))
 		return 0
 	fi
 
-	# Count positional args before the current word; capture the project (1st).
-	local i w pos=0 proj=""
+	# Flags.
+	if [[ "$cur" == -* ]]; then
+		COMPREPLY=($(compgen -W "--from --from-clipboard --no-push --version --help" -- "$cur"))
+		return 0
+	fi
+
+	# Has a positional PATH already been given? If so, nothing more to complete.
+	local i w have_path=0
 	for ((i = 1; i < COMP_CWORD; i++)); do
 		w="${COMP_WORDS[i]}"
-		[[ "$w" == -* ]] && continue
-		[ "$pos" -eq 0 ] && proj="$w"
-		pos=$((pos + 1))
+		case "$w" in
+		--from) ((i++)); continue ;; # skip its value
+		-*) continue ;;
+		*) have_path=1 ;;
+		esac
 	done
+	[ "$have_path" -eq 1 ] && return 0
 
-	case "$pos" in
-	0) # PROJECT — directories in the current notes repo
-		COMPREPLY=($(compgen -W "$(_add_notes_dirs "$PWD")" -- "$cur"))
-		;;
-	1) # MEETING — subdirectories of the chosen project
-		local pslug
-		pslug="$(_add_notes_slug "$proj")"
-		COMPREPLY=($(compgen -W "$(_add_notes_dirs "$PWD/$pslug")" -- "$cur"))
-		;;
-	*) # PATH — fall back to filename completion (via -o default)
-		COMPREPLY=()
-		;;
-	esac
+	# Complete the PATH as directories under the cwd (multi-level), skipping the
+	# repo's own .git/.web. Trailing slash + nospace lets you keep drilling down.
+	local d matches=()
+	while IFS= read -r d; do
+		case "$d" in .git | .git/* | .web | .web/*) continue ;; esac
+		matches+=("$d/")
+	done < <(compgen -d -- "$cur")
+	COMPREPLY=("${matches[@]}")
+	if [ "${#COMPREPLY[@]}" -gt 0 ]; then
+		compopt -o nospace 2>/dev/null || true
+	fi
 	return 0
 }
 

@@ -74,7 +74,7 @@ def clean_body(text: str) -> str:
     return "\n".join(collapsed).strip() + "\n"
 
 
-def frontmatter(project: str, meeting: str, date: str, created: str) -> str:
+def frontmatter(title: str, date: str, created: str) -> str:
     """Build a YAML frontmatter block. Values are double-quoted and escaped."""
 
     def q(value: str) -> str:
@@ -82,8 +82,7 @@ def frontmatter(project: str, meeting: str, date: str, created: str) -> str:
 
     return (
         "---\n"
-        f"project: {q(project)}\n"
-        f"meeting: {q(meeting)}\n"
+        f"title: {q(title)}\n"
         f"date: {q(date)}\n"
         f"created: {q(created)}\n"
         "---\n\n"
@@ -92,17 +91,16 @@ def frontmatter(project: str, meeting: str, date: str, created: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Clean AI meeting notes to Markdown.")
-    parser.add_argument("--project")
-    parser.add_argument("--meeting")
+    parser.add_argument("--title")
     parser.add_argument("--date")
     parser.add_argument("--created")
     args = parser.parse_args()
 
     body = clean_body(sys.stdin.read())
 
-    if args.project and args.meeting and args.date:
+    if args.title and args.date:
         created = args.created or datetime.now().isoformat(timespec="seconds")
-        sys.stdout.write(frontmatter(args.project, args.meeting, args.date, created))
+        sys.stdout.write(frontmatter(args.title, args.date, created))
 
     sys.stdout.write(body)
     return 0

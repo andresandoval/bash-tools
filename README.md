@@ -136,31 +136,39 @@ Each enabled tool becomes a command named after its file (minus `.sh`).
 | `copy-realpath` | `tools/copy-realpath.sh` | Copy a file's absolute path to the clipboard (`xclip`) |
 | `git-prune-local` | `tools/git-prune-local.sh` | Prune local Git branches (`--force`/`-f` to force-delete) |
 | `nvidia-prime-run` | `tools/nvidia-prime-run.sh` | Run a command on the NVIDIA GPU via PRIME render offload |
-| `add-notes` | `tools/add-notes.sh` | Capture meeting notes as clean Markdown in the current dir, with a built-in search UI and git auto-commit |
+| `add-notes` | `tools/add-notes.sh` | Capture meeting notes as clean Markdown under a freeform path in the current dir, with a built-in tree search UI and git auto-commit |
 
 Many tools provide a usage block; run them with `--help` where supported.
 
 ### `add-notes` — meeting notes in any directory
 
-Run `add-notes` inside any directory to turn it into a notes repository:
+Run `add-notes` inside any directory to turn it into a notes repository. The first
+argument is a freeform, multi-level **path** describing your own structure:
 
 ```bash
-add-notes "GarageHub" "Daily Standup" ./raw-notes.md   # from a file
-add-notes "GarageHub" "Daily Standup"                   # from the clipboard
+add-notes garagehub/daily-standup                      # -> garagehub/daily-standup/<date>.md
+add-notes garagehub/auth/design-review --from ./raw.md # multi-level, from a file
+add-notes garagehub/daily-standup                      # from the clipboard (default)
+add-notes garagehub/daily-standup/jun-12-2026.md       # backfill a past note (exact filename)
 ```
 
-- Notes are saved to `./<project>/<meeting>/<date>.md`, cleaned of AI cruft, with
-  YAML frontmatter. **Formatted (HTML) clipboard** content is converted to Markdown
-  automatically (clipboard2markdown-style); otherwise plain text is used.
-- The current directory becomes the notes repo: it must be the **git repository
-  root** (running from a subdirectory exits with an error). It is `git init`-ed on
-  demand, and must have a clean working tree if already tracked. Each note is
-  committed; if a remote is configured it is pushed too.
+- The note is saved at `<PATH>/<date>.md`, or at the exact file when `PATH` ends in
+  `.md`. Each folder segment is **slugified** (lowercase, hyphenated); the original
+  text is kept in the note's frontmatter `title`.
+- Content is cleaned of AI cruft and given YAML frontmatter. With `--from-clipboard`
+  (the default), **formatted (HTML) clipboard** content is converted to Markdown
+  automatically (clipboard2markdown-style); otherwise plain text is used. `--from FILE`
+  reads from a file instead.
+- The current directory becomes the notes repo: it must be the **git repository root**
+  (running from a subdirectory exits with an error). It is `git init`-ed on demand, and
+  must have a clean working tree if already tracked. Each note is committed; if a remote
+  is configured it is pushed too.
 - A self-contained search/browse UI is deployed to `./.web` (open `index.html` — no
-  server needed). It is refreshed automatically when the tool is updated, tracked via
-  `.web/.tool-version`.
-- Tab-completion (projects/meetings in the current directory) is enabled automatically
-  through `functions/add-notes-completion.bash`. Requires `python3` and `git`.
+  server needed); it renders your notes as a collapsible **tree** of any depth. It is
+  refreshed automatically when the tool is updated, tracked via `.web/.tool-version`.
+- Tab-completion drills through the path (directories under the current repo) and the
+  flags, enabled automatically via `functions/add-notes-completion.bash`. Requires
+  `python3` and `git`.
 
 ## ⚙️ 6. Aliases, Environment & Functions
 
@@ -208,3 +216,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 |------|--------|
 | _Initial_ | Setup script, shell config files, and command-line tools |
 | 2026-06-23 | Add `add-notes` meeting-notes tool (+ `add-notes/` assets, completion function) |
+| 2026-06-23 | `add-notes`: freeform multi-level path arg, `--from`/`--from-clipboard` flags, tree-based web UI |

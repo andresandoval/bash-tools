@@ -5,9 +5,10 @@
 # notes repository: it is git-initialized on demand and gets a self-contained
 # `.web/` search UI deployed into it.
 #
-# Notes are saved to ./<project>/<meeting>/<date>.md, cleaned of AI cruft, with
-# YAML frontmatter. Formatted (HTML) clipboard content is converted to Markdown
-# automatically (clipboard2markdown-style); otherwise plain text is used.
+# You choose the structure: PATH is a freeform, multi-level path (e.g.
+# project/team/standup). Notes are saved to <PATH>/<date>.md, or to an exact file
+# when PATH ends in .md (e.g. project/standup/recap-26-02-12.md, for past meetings).
+# Formatted (HTML) clipboard content is converted to Markdown automatically.
 #
 set -euo pipefail
 
@@ -23,31 +24,41 @@ NOTES_ROOT="$(pwd)"
 
 usage() {
 	cat <<'EOF'
-Usage: add-notes PROJECT MEETING [PATH] [--no-push]
+Usage: add-notes PATH [--from FILE | --from-clipboard] [--no-push]
 
-Store meeting notes as clean Markdown under ./<project>/<meeting>/<date>.md in the
-current directory, then commit (and push if a remote is configured).
+Store meeting notes as clean Markdown at PATH inside the current directory's notes
+repository, then commit (and push if a remote is configured).
 
 Arguments:
-  PROJECT      Project name (e.g. "GarageHub"). Folder name is slugified.
-  MEETING      Meeting name (e.g. "Daily Standup"). Folder name is slugified.
-  PATH         Optional file with the raw notes. If omitted, the clipboard is
-               read. Formatted (HTML) clipboard content is converted to clean
-               Markdown automatically; otherwise plain text is used.
+  PATH   Destination path describing your own (multi-level) structure:
+           project/team/standup        -> project/team/standup/<date>.md
+           project/standup/recap.md     a .md ending sets the exact filename,
+                                         handy for backfilling past meetings
+         Each folder segment is slugified (lowercase, hyphenated); the original
+         text is kept in the note's frontmatter title.
 
 Options:
-  --no-push    Commit but do not push (also via ADD_NOTES_NO_PUSH=1).
-  --version    Print the tool version and exit.
-  -h, --help   Show this help.
+  --from FILE        Read the raw notes from FILE.
+  --from-clipboard   Read the raw notes from the clipboard (the default if no
+                     source flag is given). Formatted (HTML) clipboard content is
+                     converted to Markdown automatically; otherwise plain text.
+  --no-push          Commit but do not push (also via ADD_NOTES_NO_PUSH=1).
+  --version          Print the tool version and exit.
+  -h, --help         Show this help.
 
 Behavior:
   - The current directory is the notes repo and must be the git repository root
-    (running from a subdirectory exits with an error). If it is not a git repo
-    you are asked to initialize one (skip the prompt with ADD_NOTES_INIT=yes|no);
-    if it already is, the working tree must be clean.
+    (running from a subdirectory exits with an error). If it is not a git repo you
+    are asked to initialize one (skip with ADD_NOTES_INIT=yes|no); if it already is,
+    the working tree must be clean.
   - A self-contained search UI is deployed/refreshed in ./.web (open index.html).
-  - If today's file already exists you are asked to override, append, or cancel
+  - If the target note already exists you are asked to override, append, or cancel
     (override non-interactively with ADD_NOTES_ON_EXISTING=override|append|cancel).
+
+Examples:
+  add-notes garagehub/daily-standup
+  add-notes garagehub/auth/design-review --from ./notes.md
+  add-notes garagehub/daily-standup/jun-12-2026.md   # backfill a past note
 
 Tab completion is installed automatically via bash-tools (functions/).
 EOF
@@ -76,7 +87,7 @@ check_deps() {
 	fi
 }
 
-# --- Clipboard helpers (only used when no file path is given) ---------------
+# --- Clipboard helpers (only used in clipboard mode) ------------------------
 clipboard_cmd() {
 	if command -v powershell.exe >/dev/null 2>&1; then
 		echo "powershell.exe -NoProfile -Command Get-Clipboard"
@@ -178,9 +189,17 @@ fi
 
 NO_PUSH=0
 [ -n "${ADD_NOTES_NO_PUSH:-}" ] && NO_PUSH=1
-POSITIONAL=()
-for arg in "$@"; do
-	case "$arg" in
+DEST_PATH=""
+SOURCE_FILE=""
+SOURCE_MODE="" # "" (default→clipboard) | file | clipboard
+
+conflict() {
+	echo "Error: --from and --from-clipboard are mutually exclusive." >&2
+	exit 1
+}
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
 	-h | --help)
 		usage
 		exit 0
@@ -190,33 +209,114 @@ for arg in "$@"; do
 		exit 0
 		;;
 	--no-push) NO_PUSH=1 ;;
-	*) POSITIONAL+=("$arg") ;;
+	--from-clipboard)
+		[ "$SOURCE_MODE" = "file" ] && conflict
+		SOURCE_MODE="clipboard"
+		;;
+	--from)
+		[ "$SOURCE_MODE" = "clipboard" ] && conflict
+		shift
+		SOURCE_FILE="${1:-}"
+		[ -z "$SOURCE_FILE" ] && {
+			echo "Error: --from requires a FILE argument." >&2
+			exit 1
+		}
+		SOURCE_MODE="file"
+		;;
+	--from=*)
+		[ "$SOURCE_MODE" = "clipboard" ] && conflict
+		SOURCE_FILE="${1#--from=}"
+		SOURCE_MODE="file"
+		;;
+	-*)
+		echo "Error: unknown option: $1" >&2
+		exit 1
+		;;
+	*)
+		if [ -z "$DEST_PATH" ]; then
+			DEST_PATH="$1"
+		else
+			echo "Error: unexpected argument: $1 (PATH is a single argument; use --from for a file)" >&2
+			exit 1
+		fi
+		;;
 	esac
+	shift
 done
 
-PROJECT="${POSITIONAL[0]:-}"
-MEETING="${POSITIONAL[1]:-}"
-INPUT="${POSITIONAL[2]:-}"
-
-if [ -z "$PROJECT" ] || [ -z "$MEETING" ]; then
-	echo "Error: PROJECT and MEETING are required." >&2
+if [ -z "$DEST_PATH" ]; then
+	echo "Error: PATH is required." >&2
 	echo >&2
 	usage >&2
 	exit 1
 fi
+[ -z "$SOURCE_MODE" ] && SOURCE_MODE="clipboard"
 
+# --- Validate and parse the destination path --------------------------------
+case "$DEST_PATH" in
+/*)
+	echo "Error: PATH must be relative (no leading '/')." >&2
+	exit 1
+	;;
+esac
+DEST_PATH="${DEST_PATH%/}"
+case "/$DEST_PATH/" in
+*/../*)
+	echo "Error: PATH must not contain '..' segments." >&2
+	exit 1
+	;;
+esac
+
+IFS='/' read -ra RAW_SEGS <<<"$DEST_PATH"
+DATE="$(date +%b-%d-%Y | tr '[:upper:]' '[:lower:]')"
+CREATED="$(date +%Y-%m-%dT%H:%M:%S)"
+TIME="$(date +%H:%M)"
+
+# A trailing ".md" segment is an explicit filename; otherwise append <date>.md.
+last_index=$((${#RAW_SEGS[@]} - 1))
+last="${RAW_SEGS[$last_index]}"
+dir_segs=()
+if [[ "$last" == *.md ]]; then
+	custom_stem="${last%.md}"
+	for ((i = 0; i < last_index; i++)); do dir_segs+=("${RAW_SEGS[$i]}"); done
+	stem_slug="$(slugify "$custom_stem")"
+	[ -z "$stem_slug" ] && {
+		echo "Error: invalid .md filename in PATH." >&2
+		exit 1
+	}
+	FNAME="$stem_slug.md"
+	DATE_FIELD="$stem_slug"
+else
+	dir_segs=("${RAW_SEGS[@]}")
+	FNAME="$DATE.md"
+	DATE_FIELD="$DATE"
+fi
+
+DIR_SLUGS=()
+TITLE=""
+for s in "${dir_segs[@]}"; do
+	[ -z "$s" ] && continue
+	DIR_SLUGS+=("$(slugify "$s")")
+	TITLE="${TITLE:+$TITLE / }$s"
+done
+[ -z "$TITLE" ] && TITLE="${FNAME%.md}"
+RELDIR="$(IFS=/; echo "${DIR_SLUGS[*]:-}")"
+if [ -n "$RELDIR" ]; then DIR="$NOTES_ROOT/$RELDIR"; else DIR="$NOTES_ROOT"; fi
+FILE="$DIR/$FNAME"
+
+# --- Preconditions ----------------------------------------------------------
 check_deps
 ensure_notes_repo
 check_git_identity
 deploy_web_if_stale
 
 # --- Resolve content --------------------------------------------------------
-if [ -n "$INPUT" ]; then
-	if [ ! -f "$INPUT" ]; then
-		echo "Error: file not found: $INPUT" >&2
+if [ "$SOURCE_MODE" = "file" ]; then
+	if [ ! -f "$SOURCE_FILE" ]; then
+		echo "Error: file not found: $SOURCE_FILE" >&2
 		exit 1
 	fi
-	content="$(cat "$INPUT")"
+	content="$(cat "$SOURCE_FILE")"
 else
 	html="$(read_clipboard_html || true)"
 	if not_blank "$html"; then
@@ -225,7 +325,7 @@ else
 	else
 		if ! cmd="$(clipboard_cmd)"; then
 			echo "Error: no clipboard tool found. Install xclip or wl-clipboard," >&2
-			echo "       or pass a file path: add-notes PROJECT MEETING PATH" >&2
+			echo "       or pass a file: add-notes PATH --from FILE" >&2
 			exit 1
 		fi
 		content="$(eval "$cmd" 2>/dev/null || true)"
@@ -237,17 +337,9 @@ if ! not_blank "$content"; then
 	exit 1
 fi
 
-# --- Compute paths ----------------------------------------------------------
-DATE="$(date +%b-%d-%Y | tr '[:upper:]' '[:lower:]')"
-CREATED="$(date +%Y-%m-%dT%H:%M:%S)"
-TIME="$(date +%H:%M)"
-PROJ_SLUG="$(slugify "$PROJECT")"
-MEET_SLUG="$(slugify "$MEETING")"
-DIR="$NOTES_ROOT/$PROJ_SLUG/$MEET_SLUG"
-FILE="$DIR/$DATE.md"
-
+# --- Write (handle collision) -----------------------------------------------
 cleaned_with_fm="$(printf '%s' "$content" | python3 "$LIB/clean_md.py" \
-	--project "$PROJECT" --meeting "$MEETING" --date "$DATE" --created "$CREATED")"
+	--title "$TITLE" --date "$DATE_FIELD" --created "$CREATED")"
 
 mkdir -p "$DIR"
 
@@ -261,7 +353,7 @@ append_section() {
 if [ -f "$FILE" ]; then
 	choice="${ADD_NOTES_ON_EXISTING:-}"
 	if [ -z "$choice" ]; then
-		echo "A note already exists for today: ${FILE#"$NOTES_ROOT"/}"
+		echo "A note already exists: ${FILE#"$NOTES_ROOT"/}"
 		printf "Override, append, or cancel? [o/a/c] "
 		if [ -r /dev/tty ]; then read -r choice </dev/tty || choice="c"; else read -r choice || choice="c"; fi
 	fi
@@ -287,7 +379,7 @@ if git -C "$NOTES_ROOT" diff --cached --quiet; then
 	echo "Nothing to commit."
 	exit 0
 fi
-git -C "$NOTES_ROOT" commit -q -m "Add notes: $PROJECT / $MEETING ($DATE)"
+git -C "$NOTES_ROOT" commit -q -m "Add notes: $TITLE ($DATE_FIELD)"
 echo "Committed."
 
 if [ "$NO_PUSH" -eq 1 ]; then

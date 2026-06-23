@@ -1,4 +1,5 @@
-/* Meeting Notes — search + browse UI. No framework; reads window.NOTES_INDEX. */
+/* Meeting Notes — search + browse UI. No framework; reads window.NOTES_INDEX.
+   Each record: { segments: [..folders], name, date, path, content }. */
 (function () {
 	"use strict";
 
@@ -8,7 +9,7 @@
 	var search = document.getElementById("search");
 
 	function escapeHtml(s) {
-		return s.replace(/[&<>"']/g, function (c) {
+		return String(s).replace(/[&<>"']/g, function (c) {
 			return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
 		});
 	}
@@ -17,56 +18,109 @@
 		if (window.marked && typeof window.marked.parse === "function") {
 			return window.marked.parse(md);
 		}
-		// Minimal fallback if the vendored renderer is missing.
 		return "<pre>" + escapeHtml(md) + "</pre>";
 	}
 
-	/* ---- Sidebar: project -> meetings tree ---- */
-	function buildTree() {
-		var projects = {};
-		NOTES.forEach(function (n) {
-			(projects[n.project] = projects[n.project] || {})[n.meeting] =
-				(projects[n.project][n.meeting] || 0) + 1;
+	function noteLabel(n) { return n.date || n.name; }
+	function notePath(n) { return n.segments.join(" / "); }
+
+	/* ---- Build an N-level tree from note segments ---- */
+	function buildTree(notes) {
+		var root = { children: {}, notes: [] };
+		notes.forEach(function (n) {
+			var node = root;
+			n.segments.forEach(function (seg) {
+				node.children[seg] = node.children[seg] || { children: {}, notes: [] };
+				node = node.children[seg];
+			});
+			node.notes.push(n);
+		});
+		return root;
+	}
+
+	function subtreeCount(node) {
+		var total = node.notes.length;
+		Object.keys(node.children).forEach(function (k) {
+			total += subtreeCount(node.children[k]);
+		});
+		return total;
+	}
+
+	function byDateDesc(a, b) {
+		var d = (b.date || "").localeCompare(a.date || "");
+		return d !== 0 ? d : (b.name || "").localeCompare(a.name || "");
+	}
+
+	/* ---- Sidebar tree (recursive) ---- */
+	function renderNode(name, node, depth, prefixSegs) {
+		var wrap = document.createElement("div");
+		wrap.className = "folder open";
+
+		var head = document.createElement("div");
+		head.className = "folder-head";
+		head.style.paddingLeft = 10 + depth * 14 + "px";
+		head.innerHTML = '<span class="caret">▶</span><span class="label">' +
+			escapeHtml(name) + '</span><span class="count">' + subtreeCount(node) + "</span>";
+		var here = prefixSegs.concat([name]);
+		head.onclick = function (e) {
+			if (e.detail === 2) { // double-click: filter to this folder's notes
+				search.value = "";
+				showList(notesUnder(node), "", here.join(" / "));
+				return;
+			}
+			wrap.classList.toggle("open");
+		};
+		wrap.appendChild(head);
+
+		var body = document.createElement("div");
+		body.className = "folder-body";
+
+		Object.keys(node.children).sort().forEach(function (k) {
+			body.appendChild(renderNode(k, node.children[k], depth + 1, here));
 		});
 
+		node.notes.slice().sort(byDateDesc).forEach(function (n) {
+			var leaf = document.createElement("div");
+			leaf.className = "note-leaf";
+			leaf.style.paddingLeft = 10 + (depth + 1) * 14 + "px";
+			leaf.innerHTML = '<span class="dot">•</span><span class="label">' +
+				escapeHtml(noteLabel(n)) + "</span>";
+			leaf.onclick = function () { setActive(leaf); showNote(n); };
+			body.appendChild(leaf);
+		});
+
+		wrap.appendChild(body);
+		return wrap;
+	}
+
+	function notesUnder(node) {
+		var out = node.notes.slice();
+		Object.keys(node.children).forEach(function (k) {
+			out = out.concat(notesUnder(node.children[k]));
+		});
+		return out;
+	}
+
+	function renderSidebar() {
+		var root = buildTree(NOTES);
 		sidebar.innerHTML = "";
-		Object.keys(projects).sort().forEach(function (proj) {
-			var meetings = projects[proj];
-			var total = Object.keys(meetings).reduce(function (a, m) { return a + meetings[m]; }, 0);
-
-			var wrap = document.createElement("div");
-			wrap.className = "proj open";
-
-			var head = document.createElement("div");
-			head.className = "proj-head";
-			head.innerHTML = '<span><span class="caret">▶</span> ' + escapeHtml(proj) +
-				'</span><span class="count">' + total + "</span>";
-			head.onclick = function () { wrap.classList.toggle("open"); };
-			wrap.appendChild(head);
-
-			var list = document.createElement("div");
-			list.className = "meetings";
-			Object.keys(meetings).sort().forEach(function (m) {
-				var row = document.createElement("div");
-				row.className = "meeting";
-				row.innerHTML = "<span>" + escapeHtml(m) + '</span><span class="count">' +
-					meetings[m] + "</span>";
-				row.onclick = function () {
-					search.value = "";
-					setActive(row);
-					showList(NOTES.filter(function (n) {
-						return n.project === proj && n.meeting === m;
-					}), "", proj + " / " + m);
-				};
-				list.appendChild(row);
-			});
-			wrap.appendChild(list);
-			sidebar.appendChild(wrap);
+		Object.keys(root.children).sort().forEach(function (k) {
+			sidebar.appendChild(renderNode(k, root.children[k], 0, []));
+		});
+		// Notes that live at the repo root (no folders), if any.
+		root.notes.slice().sort(byDateDesc).forEach(function (n) {
+			var leaf = document.createElement("div");
+			leaf.className = "note-leaf";
+			leaf.style.paddingLeft = "10px";
+			leaf.innerHTML = '<span class="dot">•</span><span class="label">' +
+				escapeHtml(noteLabel(n)) + "</span>";
+			leaf.onclick = function () { setActive(leaf); showNote(n); };
+			sidebar.appendChild(leaf);
 		});
 	}
 
 	function setActive(row) {
-		var prev = sidebar.querySelector(".meeting.active");
+		var prev = sidebar.querySelector(".note-leaf.active");
 		if (prev) prev.classList.remove("active");
 		if (row) row.classList.add("active");
 	}
@@ -99,8 +153,8 @@
 		notes.forEach(function (n) {
 			var idx = NOTES.indexOf(n);
 			html += '<div class="card" data-i="' + idx + '">' +
-				'<div class="meta"><span class="title">' + escapeHtml(n.title) +
-				'</span><span class="date">' + escapeHtml(n.date) + "</span></div>" +
+				'<div class="meta"><span class="title">' + escapeHtml(notePath(n) || n.name) +
+				'</span><span class="date">' + escapeHtml(noteLabel(n)) + "</span></div>" +
 				'<div class="snippet">' + snippet(n.content, query) + "</div></div>";
 		});
 		main.innerHTML = html;
@@ -111,9 +165,10 @@
 
 	/* ---- Single note view ---- */
 	function showNote(n) {
+		var where = (notePath(n) ? notePath(n) + " · " : "") + noteLabel(n);
 		main.innerHTML =
 			'<div class="note-bar"><button class="back">← Back</button>' +
-			'<span class="where">' + escapeHtml(n.title) + " · " + escapeHtml(n.date) + "</span></div>" +
+			'<span class="where">' + escapeHtml(where) + "</span></div>" +
 			'<article class="note">' + renderMarkdown(n.content) + "</article>";
 		main.querySelector(".back").onclick = function () { runSearch(); };
 		window.scrollTo(0, 0);
@@ -125,16 +180,17 @@
 		if (!q) { showList(NOTES, "", null); return; }
 		var lower = q.toLowerCase();
 		var hits = NOTES.filter(function (n) {
-			return (n.content + " " + n.title + " " + n.date).toLowerCase().indexOf(lower) !== -1;
+			return (n.content + " " + notePath(n) + " " + n.name + " " + n.date)
+				.toLowerCase().indexOf(lower) !== -1;
 		});
 		showList(hits, q, null);
 	}
 
 	/* ---- Init ---- */
 	if (!NOTES.length) {
-		main.innerHTML = '<p class="empty">No notes yet. Add one with <code>./add_notes.sh</code>.</p>';
+		main.innerHTML = '<p class="empty">No notes yet. Add one with <code>add-notes &lt;path&gt;</code>.</p>';
 	} else {
-		buildTree();
+		renderSidebar();
 		showList(NOTES, "", null);
 	}
 	search.addEventListener("input", runSearch);

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the search index the web UI loads.
 
-Walks PROJECT/MEETING/<date>.md notes under a notes-repo root and writes
+Walks notes at any depth (<dir>/.../<name>.md) under a notes-repo root and writes
 <root>/.web/notes-data.js as `window.NOTES_INDEX = [...]`. Loading the index as
 a plain script (rather than fetching JSON) lets the static UI work over file://
 with no server. Standard library only.
@@ -11,6 +11,7 @@ it defaults to the current working directory.
 """
 
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,14 +19,16 @@ from pathlib import Path
 REPO_ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
 OUTPUT = REPO_ROOT / ".web" / "notes-data.js"
 
-# Top-level dirs that are never projects.
+# Top-level dirs that are never part of the notes tree.
 EXCLUDE_DIRS = {".git", ".web", "lib", "docs"}
+
+DATE_RE = re.compile(r"^[a-z]{3}-\d{2}-\d{4}$", re.IGNORECASE)
 
 
 def parse_note(path: Path):
-    """Return a record dict for one note file, or None if unreadable."""
+    """Return a record dict for one note file."""
     raw = path.read_text(encoding="utf-8", errors="replace")
-    project = meeting = date = None
+    date = ""
     body = raw
 
     if raw.startswith("---\n"):
@@ -37,27 +40,21 @@ def parse_note(path: Path):
                 if ":" not in line:
                     continue
                 key, _, value = line.partition(":")
-                value = value.strip().strip('"').strip("'")
-                key = key.strip()
-                if key == "project":
-                    project = value
-                elif key == "meeting":
-                    meeting = value
-                elif key == "date":
-                    date = value
+                if key.strip() == "date":
+                    date = value.strip().strip('"').strip("'")
 
     rel = path.relative_to(REPO_ROOT)
-    # Fall back to the path/filename when frontmatter is absent or partial.
-    project = project or rel.parts[0]
-    meeting = meeting or rel.parts[1]
-    date = date or path.stem
+    segments = [str(p) for p in rel.parts[:-1]]  # the folder structure
+    name = path.stem
+    # Date: frontmatter wins; else the filename if it looks like a date.
+    if not date and DATE_RE.match(name):
+        date = name
 
     return {
-        "project": project,
-        "meeting": meeting,
+        "segments": segments,
+        "name": name,
         "date": date,
         "path": str(rel).replace("\\", "/"),
-        "title": f"{project} / {meeting}",
         "content": body.strip(),
     }
 
@@ -70,15 +67,25 @@ def date_key(date: str):
         return datetime.min
 
 
+def is_excluded(rel: Path) -> bool:
+    """Skip notes whose path crosses an excluded or hidden directory."""
+    parts = rel.parts[:-1]
+    if not parts:
+        return False  # a note at the repo root is allowed
+    if parts[0] in EXCLUDE_DIRS:
+        return True
+    return any(p.startswith(".") for p in parts)
+
+
 def main() -> int:
     records = []
-    for path in REPO_ROOT.glob("*/*/*.md"):
-        top = path.relative_to(REPO_ROOT).parts[0]
-        if top in EXCLUDE_DIRS or top.startswith("."):
+    for path in REPO_ROOT.rglob("*.md"):
+        rel = path.relative_to(REPO_ROOT)
+        if is_excluded(rel):
             continue
         records.append(parse_note(path))
 
-    records.sort(key=lambda r: date_key(r["date"]), reverse=True)
+    records.sort(key=lambda r: (date_key(r["date"]), r["path"]), reverse=True)
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(records, ensure_ascii=False, indent=2)
