@@ -13,7 +13,7 @@ selection into `~/.bashrc` and `~/.local/bin/bash-tools/`.
 |--------|--------|
 | Shell | Bash |
 | Entry point | `./setup.sh` |
-| State locations | `~/.bashrc` (managed block), `~/.local/bin/bash-tools/` (tool commands) |
+| State locations | `~/.local/bin/bash-tools/.bashrc` (managed config file, sourced from `~/.bashrc`), `~/.local/bin/bash-tools/` (tool commands) |
 | Repository mutation | None -- the repo is treated as immutable |
 | Dependencies | Optional `whiptail` or `dialog`; falls back to a built-in text selector |
 | Platforms | Linux, macOS, Windows (Git Bash / MSYS / Cygwin) |
@@ -67,29 +67,32 @@ flowchart TD
     E --> F[Reconcile ~/.local/bin/bash-tools]
     F -->|Linux / macOS| G[Create symlinks into tools/]
     F -->|Windows| H[Write wrapper scripts]
-    E --> I[Rewrite managed block in ~/.bashrc]
+    E --> I["Write managed file ~/.local/bin/bash-tools/.bashrc"]
     I --> J[source lines + BASH_TOOLS_HOME + PATH + inventory]
+    J --> L["Add source line to ~/.bashrc"]
     G --> K[Done -- open a new shell]
     H --> K
-    J --> K
+    L --> K
 ```
 
 Key behaviors:
 
 - **The repository is immutable.** `setup.sh` never writes files, metadata, or symlinks
-  inside the repo. All persistent state lives in `~/.bashrc` and `~/.local/bin/bash-tools/`.
+  inside the repo. All persistent state lives in `~/.local/bin/bash-tools/` and a single
+  managed `source` line in `~/.bashrc`.
 - **`BASH_TOOLS_HOME`** is the canonical repository root. If unset, it is inferred from
-  the location of `setup.sh`, then exported into the managed `~/.bashrc` block.
-- **Managed block.** The block in `~/.bashrc` is delimited by
-  `# >>> bash-tools managed block >>>` and `# <<< bash-tools managed block <<<`. It is
-  regenerated on every run; manual edits inside it are overwritten.
+  the location of `setup.sh`, then exported from the managed file.
+- **Managed file.** The generated file `~/.local/bin/bash-tools/.bashrc` holds the
+  `BASH_TOOLS_HOME` export, the `PATH` addition, the `source` lines, and the inventory.
+  It is overwritten on every run; edit the repository files, not this file. `~/.bashrc`
+  only sources it, via a single line marked `# bash-tools managed source` (added once).
 - **Tools: symlink vs wrapper.** On Linux/macOS each enabled tool is a symlink into
   `tools/`. On Windows shells, where `ln -s` often silently copies, a small wrapper
   script is written instead.
 - **Reconciliation.** Each run re-enables selected items, removes deselected ones, and
   prunes entries for files deleted from the repo. Unrelated entries are left untouched.
-- **Inventory.** Known files are recorded as `# bash-tools inventory:` comments so the
-  next run can report newly added or removed files.
+- **Inventory.** Known files are recorded as `# bash-tools inventory:` comments in the
+  managed file so the next run can report newly added or removed files.
 
 ## 🚀 4. Installation & Usage
 
@@ -208,7 +211,7 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | "Tool is not executable" warning | Missing execute bit on a `tools/*.sh` file | `chmod +x tools/<name>.sh`, then re-run setup |
 | No checkbox UI appears | `whiptail`/`dialog` not installed | Install one (see section 4) or use the text selector |
 | On Windows, tools are copies not links | `ln -s` copies on Git Bash/MSYS/Cygwin | Expected -- setup writes wrapper scripts instead |
-| Changes to the `~/.bashrc` block vanish | The managed block is regenerated each run | Edit the source files in the repo, not the block |
+| Changes to the managed file vanish | `~/.local/bin/bash-tools/.bashrc` is regenerated each run | Edit the source files in the repo, not the managed file |
 
 ## 📜 9. Changelog
 
@@ -217,3 +220,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | _Initial_ | Setup script, shell config files, and command-line tools |
 | 2026-06-23 | Add `add-notes` meeting-notes tool (+ `add-notes/` assets, completion function) |
 | 2026-06-23 | `add-notes`: freeform multi-level path arg, `--from`/`--from-clipboard` flags, tree-based web UI |
+| 2026-06-23 | `setup.sh`: move managed shell config into `~/.local/bin/bash-tools/.bashrc`, sourced from `~/.bashrc` (no more delimited block) |
