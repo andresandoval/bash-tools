@@ -74,6 +74,9 @@ output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
   `.web/.tool-version`, so UI updates propagate on next use without manual steps.
 - **The tool writes nothing into this repo** — it operates on the user's working
   directory only (bash-tools' immutable-repo principle).
+- **Sidebar notes sort chronologically, newest first** — `mmm-dd-yyyy` dates are parsed
+  (not string-compared, which would order by month name); undated notes sort last.
+  Folders remain alphabetical.
 
 ## Known considerations / extension points
 

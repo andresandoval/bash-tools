@@ -225,3 +225,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-06-23 | `add-notes`: freeform multi-level path arg, `--from`/`--from-clipboard` flags, tree-based web UI |
 | 2026-06-23 | `setup.sh`: move managed shell config into `~/.local/bin/bash-tools/.bashrc`, sourced from `~/.bashrc` (no more delimited block) |
 | 2026-07-16 | Add `CLAUDE.md` (AI session context, imports `AGENTS.md`) and `.docs/dev/` design specs (starting with `add-notes`) |
+| 2026-07-16 | `add-notes`: fix web UI sidebar ordering — notes now sort chronologically (newest first) instead of alphabetically by date string |

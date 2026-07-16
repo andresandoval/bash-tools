@@ -46,8 +46,20 @@
 		return total;
 	}
 
+	var MONTHS = {
+		jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+		jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
+	};
+
+	/* "mmm-dd-yyyy" → sortable "yyyy-mm-dd"; "" when absent/unparseable (sorts last). */
+	function dateKey(date) {
+		var m = /^([a-z]{3})-(\d{2})-(\d{4})$/i.exec(date || "");
+		if (!m || !MONTHS[m[1].toLowerCase()]) return "";
+		return m[3] + "-" + MONTHS[m[1].toLowerCase()] + "-" + m[2];
+	}
+
 	function byDateDesc(a, b) {
-		var d = (b.date || "").localeCompare(a.date || "");
+		var d = dateKey(b.date).localeCompare(dateKey(a.date));
 		return d !== 0 ? d : (b.name || "").localeCompare(a.name || "");
 	}
 
