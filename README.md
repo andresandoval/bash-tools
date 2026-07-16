@@ -32,6 +32,9 @@ bash-tools/
 │   ├── flutter-env.bash
 │   ├── golang-env.bash
 │   └── git-prompt.bash
+├── .docs/
+│   └── dev/                  # design specs for multi-file tools (not scanned by setup.sh)
+│       └── add-notes.md
 ├── functions/                # *.bash -- sourced from ~/.bashrc (shell functions)
 │   ├── git-navigation.bash
 │   └── add-notes-completion.bash
@@ -221,3 +224,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-06-23 | Add `add-notes` meeting-notes tool (+ `add-notes/` assets, completion function) |
 | 2026-06-23 | `add-notes`: freeform multi-level path arg, `--from`/`--from-clipboard` flags, tree-based web UI |
 | 2026-06-23 | `setup.sh`: move managed shell config into `~/.local/bin/bash-tools/.bashrc`, sourced from `~/.bashrc` (no more delimited block) |
+| 2026-07-16 | Add `CLAUDE.md` (AI session context, imports `AGENTS.md`) and `.docs/dev/` design specs (starting with `add-notes`) |
