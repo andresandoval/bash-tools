@@ -156,6 +156,9 @@ add-notes garagehub/daily-standup                      # -> garagehub/daily-stan
 add-notes garagehub/auth/design-review --from ./raw.md # multi-level, from a file
 add-notes garagehub/daily-standup                      # from the clipboard (default)
 add-notes garagehub/daily-standup/jun-12-2026.md       # backfill a past note (exact filename)
+add-notes garagehub/design-review --title "Kickoff"    # optional entry title, shown in the UI
+add-notes --delete garagehub/daily-standup/jun-12-2026.md  # delete a note (+reindex, commit)
+add-notes --rebuild                                    # refresh ./.web + index, no note added
 ```
 
 - The note is saved at `<PATH>/<date>.md`, or at the exact file when `PATH` ends in
@@ -172,9 +175,16 @@ add-notes garagehub/daily-standup/jun-12-2026.md       # backfill a past note (e
 - A self-contained search/browse UI is deployed to `./.web` (open `index.html` — no
   server needed); it renders your notes as a collapsible **tree** of any depth. It is
   refreshed automatically when the tool is updated, tracked via `.web/.tool-version`.
+- `--title TEXT` attaches an optional human title to the entry (frontmatter `label`);
+  the UI shows it next to the date (`jul-17-2026 — Kickoff`) and search matches it.
+  Untitled entries display as before.
+- `--delete PATH` removes a note (asks for confirmation, `ADD_NOTES_DELETE=yes|no` to
+  skip), prunes emptied folders, rebuilds the index, and commits. `--rebuild`
+  force-redeploys `./.web` and rebuilds the index without adding a note — use it to
+  pick up a tool update (or repair `.web`) in a repo you're only reading.
 - Tab-completion drills through the path (directories under the current repo) and the
-  flags, enabled automatically via `functions/add-notes-completion.bash`. Requires
-  `python3` and `git`.
+  flags, and completes note files after `--delete`; enabled automatically via
+  `functions/add-notes-completion.bash`. Requires `python3` and `git`.
 
 ## ⚙️ 6. Aliases, Environment & Functions
 
@@ -226,3 +236,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-06-23 | `setup.sh`: move managed shell config into `~/.local/bin/bash-tools/.bashrc`, sourced from `~/.bashrc` (no more delimited block) |
 | 2026-07-16 | Add `CLAUDE.md` (AI session context, imports `AGENTS.md`) and `.docs/dev/` design specs (starting with `add-notes`) |
 | 2026-07-16 | `add-notes`: fix web UI sidebar ordering — notes now sort chronologically (newest first) instead of alphabetically by date string |
+| 2026-07-17 | `add-notes`: add `--rebuild` (refresh `.web` + index without adding a note), `--delete PATH` (remove a note, reindex, commit), and optional `--title TEXT` (entry title shown as `date — title` in the UI, stored as frontmatter `label`) |

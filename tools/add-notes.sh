@@ -24,7 +24,9 @@ NOTES_ROOT="$(pwd)"
 
 usage() {
 	cat <<'EOF'
-Usage: add-notes PATH [--from FILE | --from-clipboard] [--no-push]
+Usage: add-notes PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
+       add-notes --delete PATH [--no-push]
+       add-notes --rebuild [--no-push]
 
 Store meeting notes as clean Markdown at PATH inside the current directory's notes
 repository, then commit (and push if a remote is configured).
@@ -38,10 +40,19 @@ Arguments:
          text is kept in the note's frontmatter title.
 
 Options:
+  --title TEXT       Optional human title for the entry. Shown next to the date in
+                     the web UI (e.g. "jul-17-2026 — Kickoff") and searchable.
+                     Without it the entry displays as before (date only).
   --from FILE        Read the raw notes from FILE.
   --from-clipboard   Read the raw notes from the clipboard (the default if no
                      source flag is given). Formatted (HTML) clipboard content is
                      converted to Markdown automatically; otherwise plain text.
+  --delete PATH      Delete the note file at PATH, rebuild the web index, and
+                     commit. Asks for confirmation first (skip the prompt with
+                     ADD_NOTES_DELETE=yes|no).
+  --rebuild          Redeploy ./.web from the tool template and rebuild the search
+                     index without adding a note (e.g. after a tool update, or to
+                     repair a modified .web). Commits the result.
   --no-push          Commit but do not push (also via ADD_NOTES_NO_PUSH=1).
   --version          Print the tool version and exit.
   -h, --help         Show this help.
@@ -59,6 +70,9 @@ Examples:
   add-notes garagehub/daily-standup
   add-notes garagehub/auth/design-review --from ./notes.md
   add-notes garagehub/daily-standup/jun-12-2026.md   # backfill a past note
+  add-notes garagehub/design-review --title "Auth kickoff"
+  add-notes --delete garagehub/daily-standup/jun-12-2026.md
+  add-notes --rebuild
 
 Tab completion is installed automatically via bash-tools (functions/).
 EOF
@@ -125,10 +139,13 @@ slugify() {
 }
 
 # --- Git seeding: ensure the cwd is a clean notes repo at its root ----------
+# Pass "allow-web-dirt" to tolerate uncommitted changes confined to .web/ —
+# --rebuild overwrites and commits those anyway (its repair use case).
 ensure_notes_repo() {
+	local allow_web_dirt="${1:-}"
 	if git -C "$NOTES_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		# Must be run from the repository root, not a subdirectory.
-		local toplevel here
+		local toplevel here dirt
 		toplevel="$(git -C "$NOTES_ROOT" rev-parse --show-toplevel)"
 		here="$(cd "$NOTES_ROOT" && pwd -P)"
 		if [ "$here" != "$toplevel" ]; then
@@ -138,7 +155,11 @@ ensure_notes_repo() {
 			echo "       cd to the repository root and try again." >&2
 			exit 1
 		fi
-		if [ -n "$(git -C "$NOTES_ROOT" status --porcelain)" ]; then
+		dirt="$(git -C "$NOTES_ROOT" status --porcelain)"
+		if [ -n "$allow_web_dirt" ] && [ -n "$dirt" ]; then
+			dirt="$(printf '%s\n' "$dirt" | grep -vE '^.. "?\.web/' || true)"
+		fi
+		if [ -n "$dirt" ]; then
 			echo "Error: git working tree is not clean — commit or stash first." >&2
 			echo "       (add-notes commits each note on its own, so the tree must start clean.)" >&2
 			exit 1
@@ -173,15 +194,44 @@ check_git_identity() {
 }
 
 # --- Deploy/refresh the .web UI from the tool template ----------------------
+# Pass "force" to redeploy even when the recorded tool version matches (used by
+# --rebuild, which must also repair a hand-edited or corrupted .web).
 deploy_web_if_stale() {
-	local current marker
+	local force="${1:-}" current marker
 	current="$(tool_version)"
 	marker="$NOTES_ROOT/.web/.tool-version"
-	if [ ! -f "$marker" ] || [ "$(cat "$marker" 2>/dev/null)" != "$current" ]; then
+	if [ -n "$force" ] || [ ! -f "$marker" ] || [ "$(cat "$marker" 2>/dev/null)" != "$current" ]; then
 		mkdir -p "$NOTES_ROOT/.web"
 		cp -R "$WEB_TEMPLATE/." "$NOTES_ROOT/.web/"
 		printf '%s\n' "$current" >"$marker"
 		echo "Deployed/updated .web (tool version $current)."
+	fi
+}
+
+# --- Stage everything, commit with MSG, and push per the usual rules --------
+commit_and_push() {
+	local msg="$1"
+	git -C "$NOTES_ROOT" add -A
+	if git -C "$NOTES_ROOT" diff --cached --quiet; then
+		echo "Nothing to commit."
+		return 0
+	fi
+	git -C "$NOTES_ROOT" commit -q -m "$msg"
+	echo "Committed."
+
+	if [ "$NO_PUSH" -eq 1 ]; then
+		echo "Skipped push (--no-push)."
+		return 0
+	fi
+
+	# Push only when there is somewhere to push to.
+	if git -C "$NOTES_ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+		git -C "$NOTES_ROOT" push && echo "Pushed."
+	elif git -C "$NOTES_ROOT" remote get-url origin >/dev/null 2>&1; then
+		git -C "$NOTES_ROOT" push -u origin HEAD && echo "Pushed (set upstream to origin)."
+	else
+		echo "No remote configured — skipped push. Add one with:"
+		echo "  git -C \"$NOTES_ROOT\" remote add origin <url>"
 	fi
 }
 
@@ -193,12 +243,20 @@ fi
 
 NO_PUSH=0
 [ -n "${ADD_NOTES_NO_PUSH:-}" ] && NO_PUSH=1
+MODE="add" # add | delete | rebuild
 DEST_PATH=""
+DELETE_PATH=""
+ENTRY_TITLE=""
 SOURCE_FILE=""
 SOURCE_MODE="" # "" (default→clipboard) | file | clipboard
 
 conflict() {
 	echo "Error: --from and --from-clipboard are mutually exclusive." >&2
+	exit 1
+}
+
+mode_conflict() {
+	echo "Error: --rebuild and --delete are mutually exclusive (and may be given only once)." >&2
 	exit 1
 }
 
@@ -232,6 +290,44 @@ while [ "$#" -gt 0 ]; do
 		SOURCE_FILE="${1#--from=}"
 		SOURCE_MODE="file"
 		;;
+	--title)
+		shift
+		ENTRY_TITLE="${1:-}"
+		[ -z "$ENTRY_TITLE" ] && {
+			echo "Error: --title requires a TEXT argument." >&2
+			exit 1
+		}
+		;;
+	--title=*)
+		ENTRY_TITLE="${1#--title=}"
+		[ -z "$ENTRY_TITLE" ] && {
+			echo "Error: --title requires a TEXT argument." >&2
+			exit 1
+		}
+		;;
+	--delete)
+		[ "$MODE" != "add" ] && mode_conflict
+		shift
+		DELETE_PATH="${1:-}"
+		[ -z "$DELETE_PATH" ] && {
+			echo "Error: --delete requires a PATH argument." >&2
+			exit 1
+		}
+		MODE="delete"
+		;;
+	--delete=*)
+		[ "$MODE" != "add" ] && mode_conflict
+		DELETE_PATH="${1#--delete=}"
+		[ -z "$DELETE_PATH" ] && {
+			echo "Error: --delete requires a PATH argument." >&2
+			exit 1
+		}
+		MODE="delete"
+		;;
+	--rebuild)
+		[ "$MODE" != "add" ] && mode_conflict
+		MODE="rebuild"
+		;;
 	-*)
 		echo "Error: unknown option: $1" >&2
 		exit 1
@@ -248,6 +344,117 @@ while [ "$#" -gt 0 ]; do
 	shift
 done
 
+# --- Validate flag/mode combinations -----------------------------------------
+if [ "$MODE" != "add" ]; then
+	extra=()
+	[ -n "$DEST_PATH" ] && extra+=("PATH")
+	[ -n "$SOURCE_MODE" ] && extra+=("--from/--from-clipboard")
+	[ -n "$ENTRY_TITLE" ] && extra+=("--title")
+	if [ "${#extra[@]}" -gt 0 ]; then
+		echo "Error: --$MODE does not accept: ${extra[*]}" >&2
+		exit 1
+	fi
+fi
+
+# --- Rebuild mode: refresh .web + index, no note involved --------------------
+if [ "$MODE" = "rebuild" ]; then
+	check_deps
+	ensure_notes_repo allow-web-dirt
+	check_git_identity
+	deploy_web_if_stale force
+	python3 "$LIB/build_index.py" "$NOTES_ROOT"
+	commit_and_push "Rebuild notes web UI (tool version $(tool_version))"
+	exit 0
+fi
+
+# --- Delete mode: remove one note, reindex, commit ----------------------------
+if [ "$MODE" = "delete" ]; then
+	case "$DELETE_PATH" in
+	/*)
+		echo "Error: PATH must be relative (no leading '/')." >&2
+		exit 1
+		;;
+	esac
+	DELETE_PATH="${DELETE_PATH%/}"
+	case "/$DELETE_PATH/" in
+	*/../*)
+		echo "Error: PATH must not contain '..' segments." >&2
+		exit 1
+		;;
+	esac
+	case "$DELETE_PATH" in
+	.git | .git/* | .web | .web/*)
+		echo "Error: refusing to delete inside .git or .web." >&2
+		exit 1
+		;;
+	esac
+	case "$DELETE_PATH" in
+	*.md) ;;
+	*)
+		echo "Error: --delete expects a .md note file." >&2
+		exit 1
+		;;
+	esac
+
+	check_deps
+	ensure_notes_repo
+	check_git_identity
+
+	# Resolve: the literal path first, then the slugified form (so the original
+	# pre-slug text works too, mirroring how the note was addressed when added).
+	TARGET="$NOTES_ROOT/$DELETE_PATH"
+	if [ ! -f "$TARGET" ]; then
+		IFS='/' read -ra del_segs <<<"$DELETE_PATH"
+		slug_segs=()
+		last_i=$((${#del_segs[@]} - 1))
+		for ((i = 0; i <= last_i; i++)); do
+			s="${del_segs[$i]}"
+			[ -z "$s" ] && continue
+			if [ "$i" -eq "$last_i" ]; then
+				slug_segs+=("$(slugify "${s%.md}").md")
+			else
+				slug_segs+=("$(slugify "$s")")
+			fi
+		done
+		alt="$(IFS=/; echo "${slug_segs[*]}")"
+		if [ -f "$NOTES_ROOT/$alt" ]; then
+			DELETE_PATH="$alt"
+			TARGET="$NOTES_ROOT/$alt"
+		else
+			echo "Error: note not found: $DELETE_PATH" >&2
+			exit 1
+		fi
+	fi
+
+	ans="${ADD_NOTES_DELETE:-}"
+	if [ -z "$ans" ]; then
+		printf "Delete %s? [y/N] " "$DELETE_PATH"
+		if [ -r /dev/tty ]; then read -r ans </dev/tty || ans="n"; else read -r ans || ans="n"; fi
+	fi
+	case "$ans" in
+	y | Y | yes) ;;
+	*)
+		echo "Cancelled. No changes made."
+		exit 0
+		;;
+	esac
+
+	rm -- "$TARGET"
+	# Prune directories the deletion left empty, up to (not including) the root.
+	d="$(dirname "$TARGET")"
+	while [ "$d" != "$NOTES_ROOT" ] && [ -d "$d" ] && [ -z "$(ls -A "$d")" ]; do
+		rmdir "$d"
+		d="$(dirname "$d")"
+	done
+	echo "Deleted $DELETE_PATH"
+
+	deploy_web_if_stale
+	python3 "$LIB/build_index.py" "$NOTES_ROOT"
+	commit_and_push "Delete note: $DELETE_PATH"
+	exit 0
+fi
+
+# --- Add mode ----------------------------------------------------------------
 if [ -z "$DEST_PATH" ]; then
 	echo "Error: PATH is required." >&2
 	echo >&2
@@ -341,8 +548,10 @@ if ! not_blank "$content"; then
 fi
 
 # --- Write (handle collision) -----------------------------------------------
+label_args=()
+[ -n "$ENTRY_TITLE" ] && label_args=(--label "$ENTRY_TITLE")
 cleaned_with_fm="$(printf '%s' "$content" | python3 "$LIB/clean_md.py" \
-	--title "$TITLE" --date "$DATE_FIELD" --created "$CREATED")"
+	--title "$TITLE" --date "$DATE_FIELD" --created "$CREATED" "${label_args[@]}")"
 
 mkdir -p "$DIR"
 
@@ -350,7 +559,7 @@ write_new() { printf '%s\n' "$cleaned_with_fm" >"$FILE"; }
 append_section() {
 	local body
 	body="$(printf '%s' "$content" | python3 "$LIB/clean_md.py")"
-	printf '\n\n## Added %s\n\n%s\n' "$TIME" "$body" >>"$FILE"
+	printf '\n\n## Added %s\n\n%s\n' "$TIME${ENTRY_TITLE:+ — $ENTRY_TITLE}" "$body" >>"$FILE"
 }
 
 if [ -f "$FILE" ]; then
@@ -377,25 +586,4 @@ fi
 python3 "$LIB/build_index.py" "$NOTES_ROOT"
 
 # --- Commit & push ----------------------------------------------------------
-git -C "$NOTES_ROOT" add -A
-if git -C "$NOTES_ROOT" diff --cached --quiet; then
-	echo "Nothing to commit."
-	exit 0
-fi
-git -C "$NOTES_ROOT" commit -q -m "Add notes: $TITLE ($DATE_FIELD)"
-echo "Committed."
-
-if [ "$NO_PUSH" -eq 1 ]; then
-	echo "Skipped push (--no-push)."
-	exit 0
-fi
-
-# Push only when there is somewhere to push to.
-if git -C "$NOTES_ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-	git -C "$NOTES_ROOT" push && echo "Pushed."
-elif git -C "$NOTES_ROOT" remote get-url origin >/dev/null 2>&1; then
-	git -C "$NOTES_ROOT" push -u origin HEAD && echo "Pushed (set upstream to origin)."
-else
-	echo "No remote configured — skipped push. Add one with:"
-	echo "  git -C \"$NOTES_ROOT\" remote add origin <url>"
-fi
+commit_and_push "Add notes: $TITLE ($DATE_FIELD)"

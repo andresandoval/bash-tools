@@ -77,15 +77,21 @@ def clean_body(text: str) -> str:
     return "\n".join(collapsed).strip() + "\n"
 
 
-def frontmatter(title: str, date: str, created: str) -> str:
-    """Build a YAML frontmatter block. Values are double-quoted and escaped."""
+def frontmatter(title: str, date: str, created: str, label: str = "") -> str:
+    """Build a YAML frontmatter block. Values are double-quoted and escaped.
+
+    `label` is the user's optional entry title (from `add-notes --title`); it is
+    a separate key because `title` already holds the pre-slug path text.
+    """
 
     def q(value: str) -> str:
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
+    label_line = f"label: {q(label)}\n" if label else ""
     return (
         "---\n"
         f"title: {q(title)}\n"
+        f"{label_line}"
         f"date: {q(date)}\n"
         f"created: {q(created)}\n"
         "---\n\n"
@@ -95,6 +101,7 @@ def frontmatter(title: str, date: str, created: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Clean AI meeting notes to Markdown.")
     parser.add_argument("--title")
+    parser.add_argument("--label")
     parser.add_argument("--date")
     parser.add_argument("--created")
     args = parser.parse_args()
@@ -103,7 +110,7 @@ def main() -> int:
 
     if args.title and args.date:
         created = args.created or datetime.now().isoformat(timespec="seconds")
-        sys.stdout.write(frontmatter(args.title, args.date, created))
+        sys.stdout.write(frontmatter(args.title, args.date, created, args.label or ""))
 
     sys.stdout.write(body)
     return 0

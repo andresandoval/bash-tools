@@ -32,7 +32,9 @@ from the managed `~/.local/bin/bash-tools/.bashrc`.
 ## Command interface
 
 ```
-add-notes PATH [--from FILE | --from-clipboard] [--no-push]
+add-notes PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
+add-notes --delete PATH [--no-push]
+add-notes --rebuild [--no-push]
 ```
 
 - `PATH` = your own freeform, multi-level structure. `garagehub/daily-standup` →
@@ -40,10 +42,24 @@ add-notes PATH [--from FILE | --from-clipboard] [--no-push]
   (`garagehub/daily/jun-12-2026.md`) that exact filename is used (backfill past notes).
 - Each folder segment is **slugified**; the original text is kept in the note's
   frontmatter `title`.
+- `--title TEXT` = optional entry title, stored as frontmatter `label` and shown by
+  the web UI as `date — title`; also searchable. When appending to an existing note,
+  the title goes into the section heading (`## Added HH:MM — TEXT`) instead.
 - Source: `--from FILE`, or `--from-clipboard` (the default). Mutually exclusive.
+- `--delete PATH` = remove one note file (literal path, or its slugified form as a
+  fallback), prune emptied parent dirs, rebuild the index, commit
+  (`Delete note: <path>`). Confirmation prompt; `ADD_NOTES_DELETE=yes|no` skips it.
+  Refuses non-`.md` paths and anything under `.git`/`.web`.
+- `--rebuild` = force-redeploy `.web/` from the tool template (ignores the
+  `.tool-version` gate, so it also repairs a modified `.web`), rebuild the index,
+  commit (`Rebuild notes web UI (tool version X)`). No note involved. Uncommitted
+  changes confined to `.web/` are tolerated — that is the repair case, and rebuild
+  overwrites them anyway; dirt anywhere else still aborts.
+- The three modes are mutually exclusive; `--rebuild`/`--delete` reject PATH,
+  source flags, and `--title`. `--no-push` applies to all modes.
 - `--no-push` (or `ADD_NOTES_NO_PUSH=1`) commits without pushing. `--version`, `-h/--help`.
 - Env overrides for non-interactive runs: `ADD_NOTES_INIT=yes|no`,
-  `ADD_NOTES_ON_EXISTING=override|append|cancel`.
+  `ADD_NOTES_ON_EXISTING=override|append|cancel`, `ADD_NOTES_DELETE=yes|no`.
 
 ## Runtime behavior
 
@@ -57,7 +73,11 @@ add-notes PATH [--from FILE | --from-clipboard] [--no-push]
    `html2md.py`, clipboard2markdown-style) with plain-text fallback.
 6. Cleans (`clean_md.py`), writes note with frontmatter, prompts on same-file collision
    (override/append/cancel), rebuilds `.web/notes-data.js`, commits, and pushes only if
-   a remote/upstream exists.
+   a remote/upstream exists (`commit_and_push`, shared by all three modes).
+
+Delete mode runs the same preconditions (repo root, clean tree, identity), then
+confirms, removes the file, prunes now-empty parent dirs, reindexes, and commits.
+Rebuild mode runs the preconditions, force-deploys `.web/`, reindexes, and commits.
 
 Clipboard is cross-platform: WSL/Windows `powershell.exe Get-Clipboard` (forced UTF-8
 output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
@@ -77,6 +97,12 @@ output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
 - **Sidebar notes sort chronologically, newest first** — `mmm-dd-yyyy` dates are parsed
   (not string-compared, which would order by month name); undated notes sort last.
   Folders remain alphabetical.
+- **Entry titles live in frontmatter `label`, not `title`** — `title` already stores
+  the pre-slug folder-path text on every existing note (and the index ignores it), so
+  reusing it would have made old notes display their folder path as a title. A new key
+  means zero migration; titles never affect sort order.
+- **Flags, not subcommands** (`--rebuild`, `--delete`) — keeps `PATH` fully freeform
+  with no reserved words.
 
 ## Known considerations / extension points
 

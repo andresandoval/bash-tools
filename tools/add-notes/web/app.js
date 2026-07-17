@@ -21,7 +21,11 @@
 		return "<pre>" + escapeHtml(md) + "</pre>";
 	}
 
-	function noteLabel(n) { return n.date || n.name; }
+	function noteLabel(n) {
+		var base = n.date || n.name;
+		if (n.label) return base ? base + " — " + n.label : n.label;
+		return base;
+	}
 	function notePath(n) { return n.segments.join(" / "); }
 
 	/* ---- Build an N-level tree from note segments ---- */
@@ -192,7 +196,7 @@
 		if (!q) { showList(NOTES, "", null); return; }
 		var lower = q.toLowerCase();
 		var hits = NOTES.filter(function (n) {
-			return (n.content + " " + notePath(n) + " " + n.name + " " + n.date)
+			return (n.content + " " + notePath(n) + " " + n.name + " " + n.date + " " + (n.label || ""))
 				.toLowerCase().indexOf(lower) !== -1;
 		});
 		showList(hits, q, null);

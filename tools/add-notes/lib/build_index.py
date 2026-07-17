@@ -25,10 +25,19 @@ EXCLUDE_DIRS = {".git", ".web", "lib", "docs"}
 DATE_RE = re.compile(r"^[a-z]{3}-\d{2}-\d{4}$", re.IGNORECASE)
 
 
+def fm_value(value: str) -> str:
+    """Unquote a frontmatter value written by clean_md.py (double-quoted, escaped)."""
+    v = value.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        v = v[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return v
+
+
 def parse_note(path: Path):
     """Return a record dict for one note file."""
     raw = path.read_text(encoding="utf-8", errors="replace")
     date = ""
+    label = ""
     body = raw
 
     if raw.startswith("---\n"):
@@ -41,7 +50,9 @@ def parse_note(path: Path):
                     continue
                 key, _, value = line.partition(":")
                 if key.strip() == "date":
-                    date = value.strip().strip('"').strip("'")
+                    date = fm_value(value)
+                elif key.strip() == "label":
+                    label = fm_value(value)
 
     rel = path.relative_to(REPO_ROOT)
     segments = [str(p) for p in rel.parts[:-1]]  # the folder structure
@@ -54,6 +65,7 @@ def parse_note(path: Path):
         "segments": segments,
         "name": name,
         "date": date,
+        "label": label,
         "path": str(rel).replace("\\", "/"),
         "content": body.strip(),
     }
