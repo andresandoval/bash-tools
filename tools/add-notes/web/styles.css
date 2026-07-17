@@ -52,16 +52,28 @@ header h1 { font-size: 18px; margin: 0; white-space: nowrap; }
 }
 
 #sidebar {
-	width: 280px;
-	flex: 0 0 280px;
+	width: 280px; /* default; drag the divider to resize (persisted by app.js) */
+	flex: 0 0 auto;
 	padding: 16px 12px;
 	border-right: 1px solid var(--border);
 	background: var(--panel);
 	height: calc(100vh - 59px);
-	overflow-y: auto;
+	overflow: auto;
 	position: sticky;
 	top: 59px;
 }
+
+#divider {
+	flex: 0 0 6px;
+	cursor: col-resize;
+	position: sticky;
+	top: 59px;
+	height: calc(100vh - 59px);
+	margin-left: -1px; /* sit on the sidebar's border */
+}
+#divider:hover { background: var(--accent-soft); }
+body.resizing #divider { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
 
 #main {
 	flex: 1;
@@ -69,7 +81,9 @@ header h1 { font-size: 18px; margin: 0; white-space: nowrap; }
 	min-width: 0;
 }
 
-/* Sidebar tree (arbitrary depth) */
+/* Sidebar tree (arbitrary depth). Rows grow to their content (max-content) so
+   long names overflow into the sidebar's horizontal scroll instead of being
+   clipped; min-width keeps short rows spanning the visible panel. */
 .folder-head, .note-leaf {
 	display: flex;
 	align-items: center;
@@ -78,6 +92,8 @@ header h1 { font-size: 18px; margin: 0; white-space: nowrap; }
 	border-radius: 7px;
 	cursor: pointer;
 	user-select: none;
+	width: max-content;
+	min-width: 100%;
 }
 .folder-head { font-weight: 600; }
 .folder-head:hover, .note-leaf:hover { background: var(--accent-soft); }
@@ -152,6 +168,6 @@ mark { background: var(--mark); padding: 0 1px; border-radius: 2px; }
 .note blockquote { border-left: 3px solid var(--border); margin: 12px 0; padding: 2px 14px; color: var(--muted); }
 
 @media (max-width: 720px) {
-	#sidebar { display: none; }
+	#sidebar, #divider { display: none; }
 	header { flex-wrap: wrap; }
 }

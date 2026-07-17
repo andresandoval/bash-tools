@@ -117,6 +117,11 @@ output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
   means zero migration; titles never affect sort order.
 - **Flags, not subcommands** (`--rebuild`, `--delete`) — keeps `PATH` fully freeform
   with no reserved words.
+- **Resizable sidebar with horizontal scroll** — a drag divider between the tree
+  and the content pane resizes the panel (width clamped to [160px, 60vw], persisted
+  in `localStorage["notes-sidebar-w"]`, double-click resets); tree rows use
+  `width: max-content` so long names overflow into the sidebar's horizontal
+  scrollbar instead of being ellipsized.
 
 ## Known considerations / extension points
 

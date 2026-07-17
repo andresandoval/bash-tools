@@ -175,8 +175,10 @@ add-notes --rebuild                                    # refresh ./.web + index,
   must have a clean working tree if already tracked. Each note is committed; if a remote
   is configured it is pushed too.
 - A self-contained search/browse UI is deployed to `./.web` (open `index.html` — no
-  server needed); it renders your notes as a collapsible **tree** of any depth. It is
-  refreshed automatically when the tool is updated, tracked via `.web/.tool-version`.
+  server needed); it renders your notes as a collapsible **tree** of any depth. The
+  tree panel is resizable (drag the divider; double-click resets) and scrolls
+  horizontally for long names. It is refreshed automatically when the tool is
+  updated, tracked via `.web/.tool-version`.
 - `--title TEXT` attaches an optional human title to the entry (frontmatter `label`);
   the UI shows it next to the date (`jul-17-2026 — Kickoff`) and search matches it.
   Untitled entries display as before.
@@ -244,3 +246,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-07-16 | `add-notes`: fix web UI sidebar ordering — notes now sort chronologically (newest first) instead of alphabetically by date string |
 | 2026-07-17 | `add-notes`: add `--rebuild` (refresh `.web` + index without adding a note), `--delete PATH` (remove a note, reindex, commit), and optional `--title TEXT` (entry title shown as `date — title` in the UI, stored as frontmatter `label`) |
 | 2026-07-17 | `add-notes`: add `--rename OLD NEW` (move/rename a note; folder NEW keeps the filename, `.md` NEW renames exactly; frontmatter title/date follow the new location) |
+| 2026-07-17 | `add-notes`: web UI sidebar is now resizable (drag divider, width persisted, double-click to reset) and scrolls horizontally so long names are fully visible |

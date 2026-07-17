@@ -202,6 +202,42 @@
 		showList(hits, q, null);
 	}
 
+	/* ---- Resizable sidebar (drag the divider; width persists per repo) ---- */
+	(function () {
+		var divider = document.getElementById("divider");
+		if (!divider || !sidebar) return;
+		var KEY = "notes-sidebar-w";
+
+		function clampWidth(w) {
+			return Math.max(160, Math.min(Math.round(window.innerWidth * 0.6), w));
+		}
+		function apply(w) { sidebar.style.width = clampWidth(w) + "px"; }
+
+		var saved = NaN;
+		try { saved = parseInt(localStorage.getItem(KEY), 10); } catch (e) { /* storage may be unavailable over file:// */ }
+		if (saved) apply(saved);
+
+		divider.addEventListener("pointerdown", function (e) {
+			e.preventDefault();
+			divider.setPointerCapture(e.pointerId);
+			document.body.classList.add("resizing");
+			function move(ev) { apply(ev.clientX - sidebar.getBoundingClientRect().left); }
+			function up() {
+				divider.removeEventListener("pointermove", move);
+				divider.removeEventListener("pointerup", up);
+				document.body.classList.remove("resizing");
+				try { localStorage.setItem(KEY, parseInt(sidebar.style.width, 10)); } catch (e) { }
+			}
+			divider.addEventListener("pointermove", move);
+			divider.addEventListener("pointerup", up);
+		});
+
+		divider.addEventListener("dblclick", function () {
+			sidebar.style.width = ""; // back to the stylesheet default
+			try { localStorage.removeItem(KEY); } catch (e) { }
+		});
+	})();
+
 	/* ---- Init ---- */
 	if (!NOTES.length) {
 		main.innerHTML = '<p class="empty">No notes yet. Add one with <code>add-notes &lt;path&gt;</code>.</p>';
