@@ -21,9 +21,11 @@ _add_notes_complete() {
 		return 0
 	fi
 
-	# After --delete, complete note (.md) files under the cwd, drilling through
-	# directories like the PATH completion (skipping the repo's own .git/.web).
-	if [ "$prev" = "--delete" ]; then
+	# After --delete or --rename, complete note (.md) files under the cwd,
+	# drilling through directories (skipping the repo's own .git/.web). The
+	# second --rename argument (a destination) falls through to the PATH
+	# completion below, which completes directories.
+	if [ "$prev" = "--delete" ] || [ "$prev" = "--rename" ]; then
 		local f matches=()
 		while IFS= read -r f; do
 			case "$f" in .git | .git/* | .web | .web/*) continue ;; esac
@@ -42,7 +44,7 @@ _add_notes_complete() {
 
 	# Flags.
 	if [[ "$cur" == -* ]]; then
-		COMPREPLY=($(compgen -W "--title --from --from-clipboard --delete --rebuild --no-push --version --help" -- "$cur"))
+		COMPREPLY=($(compgen -W "--title --from --from-clipboard --delete --rename --rebuild --no-push --version --help" -- "$cur"))
 		return 0
 	fi
 
@@ -52,6 +54,7 @@ _add_notes_complete() {
 		w="${COMP_WORDS[i]}"
 		case "$w" in
 		--from | --title | --delete) ((i++)); continue ;; # skip their values
+		--rename) ((i += 2)); continue ;;                 # skip OLD and NEW
 		-*) continue ;;
 		*) have_path=1 ;;
 		esac

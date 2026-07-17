@@ -26,6 +26,7 @@ usage() {
 	cat <<'EOF'
 Usage: add-notes PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
        add-notes --delete PATH [--no-push]
+       add-notes --rename OLD NEW [--no-push]
        add-notes --rebuild [--no-push]
 
 Store meeting notes as clean Markdown at PATH inside the current directory's notes
@@ -50,6 +51,11 @@ Options:
   --delete PATH      Delete the note file at PATH, rebuild the web index, and
                      commit. Asks for confirmation first (skip the prompt with
                      ADD_NOTES_DELETE=yes|no).
+  --rename OLD NEW   Move/rename the note at OLD. NEW ending in .md is the exact
+                     target file; otherwise NEW is a destination folder and the
+                     file keeps its name. The note's frontmatter title (and, when
+                     the filename changes, its date) follows the new location.
+                     Refuses to overwrite an existing note.
   --rebuild          Redeploy ./.web from the tool template and rebuild the search
                      index without adding a note (e.g. after a tool update, or to
                      repair a modified .web). Commits the result.
@@ -72,6 +78,8 @@ Examples:
   add-notes garagehub/daily-standup/jun-12-2026.md   # backfill a past note
   add-notes garagehub/design-review --title "Auth kickoff"
   add-notes --delete garagehub/daily-standup/jun-12-2026.md
+  add-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro
+  add-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md
   add-notes --rebuild
 
 Tab completion is installed automatically via bash-tools (functions/).
@@ -243,9 +251,11 @@ fi
 
 NO_PUSH=0
 [ -n "${ADD_NOTES_NO_PUSH:-}" ] && NO_PUSH=1
-MODE="add" # add | delete | rebuild
+MODE="add" # add | delete | rename | rebuild
 DEST_PATH=""
 DELETE_PATH=""
+RENAME_OLD=""
+RENAME_NEW=""
 ENTRY_TITLE=""
 SOURCE_FILE=""
 SOURCE_MODE="" # "" (default→clipboard) | file | clipboard
@@ -256,7 +266,7 @@ conflict() {
 }
 
 mode_conflict() {
-	echo "Error: --rebuild and --delete are mutually exclusive (and may be given only once)." >&2
+	echo "Error: --rebuild, --delete, and --rename are mutually exclusive (and may be given only once)." >&2
 	exit 1
 }
 
@@ -323,6 +333,17 @@ while [ "$#" -gt 0 ]; do
 			exit 1
 		}
 		MODE="delete"
+		;;
+	--rename)
+		[ "$MODE" != "add" ] && mode_conflict
+		RENAME_OLD="${2:-}"
+		RENAME_NEW="${3:-}"
+		if [ -z "$RENAME_OLD" ] || [ -z "$RENAME_NEW" ]; then
+			echo "Error: --rename requires OLD and NEW arguments." >&2
+			exit 1
+		fi
+		shift 2
+		MODE="rename"
 		;;
 	--rebuild)
 		[ "$MODE" != "add" ] && mode_conflict
@@ -451,6 +472,130 @@ if [ "$MODE" = "delete" ]; then
 	deploy_web_if_stale
 	python3 "$LIB/build_index.py" "$NOTES_ROOT"
 	commit_and_push "Delete note: $DELETE_PATH"
+	exit 0
+fi
+
+# --- Rename mode: move/rename one note, refresh frontmatter, commit ----------
+if [ "$MODE" = "rename" ]; then
+	for p in "$RENAME_OLD" "$RENAME_NEW"; do
+		case "$p" in
+		/*)
+			echo "Error: paths must be relative (no leading '/')." >&2
+			exit 1
+			;;
+		esac
+		case "/$p/" in
+		*/../*)
+			echo "Error: paths must not contain '..' segments." >&2
+			exit 1
+			;;
+		esac
+		case "$p" in
+		.git | .git/* | .web | .web/*)
+			echo "Error: refusing to touch .git or .web." >&2
+			exit 1
+			;;
+		esac
+	done
+	RENAME_OLD="${RENAME_OLD%/}"
+	RENAME_NEW="${RENAME_NEW%/}"
+	case "$RENAME_OLD" in
+	*.md) ;;
+	*)
+		echo "Error: --rename OLD must be a .md note file." >&2
+		exit 1
+		;;
+	esac
+
+	check_deps
+	ensure_notes_repo
+	check_git_identity
+
+	# Resolve OLD: the literal path first, then the slugified form (as --delete).
+	SRC="$NOTES_ROOT/$RENAME_OLD"
+	if [ ! -f "$SRC" ]; then
+		IFS='/' read -ra old_segs <<<"$RENAME_OLD"
+		slug_segs=()
+		last_i=$((${#old_segs[@]} - 1))
+		for ((i = 0; i <= last_i; i++)); do
+			s="${old_segs[$i]}"
+			[ -z "$s" ] && continue
+			if [ "$i" -eq "$last_i" ]; then
+				slug_segs+=("$(slugify "${s%.md}").md")
+			else
+				slug_segs+=("$(slugify "$s")")
+			fi
+		done
+		alt="$(IFS=/; echo "${slug_segs[*]}")"
+		if [ -f "$NOTES_ROOT/$alt" ]; then
+			RENAME_OLD="$alt"
+			SRC="$NOTES_ROOT/$alt"
+		else
+			echo "Error: note not found: $RENAME_OLD" >&2
+			exit 1
+		fi
+	fi
+
+	# Derive the target: NEW ending in .md is the exact file; otherwise NEW is a
+	# destination folder and the file keeps its name. Segments are slugified and
+	# the pre-slug folder text becomes the note's new title (as in add mode).
+	IFS='/' read -ra new_segs <<<"$RENAME_NEW"
+	new_last_i=$((${#new_segs[@]} - 1))
+	new_stem=""
+	new_dir_segs=()
+	if [[ "${new_segs[$new_last_i]}" == *.md ]]; then
+		new_stem="$(slugify "${new_segs[$new_last_i]%.md}")"
+		[ -z "$new_stem" ] && {
+			echo "Error: invalid .md filename in NEW." >&2
+			exit 1
+		}
+		for ((i = 0; i < new_last_i; i++)); do new_dir_segs+=("${new_segs[$i]}"); done
+	else
+		new_dir_segs=("${new_segs[@]}")
+	fi
+	NEW_TITLE=""
+	new_dir_slugs=()
+	for s in "${new_dir_segs[@]}"; do
+		[ -z "$s" ] && continue
+		new_dir_slugs+=("$(slugify "$s")")
+		NEW_TITLE="${NEW_TITLE:+$NEW_TITLE / }$s"
+	done
+	old_fname="$(basename "$RENAME_OLD")"
+	if [ -n "$new_stem" ]; then new_fname="$new_stem.md"; else new_fname="$old_fname"; fi
+	[ -z "$NEW_TITLE" ] && NEW_TITLE="${new_fname%.md}"
+	new_reldir="$(IFS=/; echo "${new_dir_slugs[*]:-}")"
+	if [ -n "$new_reldir" ]; then NEW_REL="$new_reldir/$new_fname"; else NEW_REL="$new_fname"; fi
+	DST="$NOTES_ROOT/$NEW_REL"
+
+	if [ "$NEW_REL" = "$RENAME_OLD" ]; then
+		echo "Error: OLD and NEW are the same path: $NEW_REL" >&2
+		exit 1
+	fi
+	if [ -e "$DST" ]; then
+		echo "Error: target already exists: $NEW_REL" >&2
+		exit 1
+	fi
+
+	mkdir -p "$(dirname "$DST")"
+	mv -- "$SRC" "$DST"
+	# Prune directories the move left empty, up to (not including) the root.
+	d="$(dirname "$SRC")"
+	while [ "$d" != "$NOTES_ROOT" ] && [ -d "$d" ] && [ -z "$(ls -A "$d")" ]; do
+		rmdir "$d"
+		d="$(dirname "$d")"
+	done
+	echo "Renamed $RENAME_OLD -> $NEW_REL"
+
+	# Refresh frontmatter: the title always follows the new location; the date
+	# only when the filename stem changed (the web index prefers frontmatter date,
+	# so a stale one would keep showing the old date after a date-fix rename).
+	refront_args=(--title "$NEW_TITLE")
+	[ "${new_fname%.md}" != "${old_fname%.md}" ] && refront_args+=(--date "${new_fname%.md}")
+	python3 "$LIB/refront.py" "$DST" "${refront_args[@]}"
+
+	deploy_web_if_stale
+	python3 "$LIB/build_index.py" "$NOTES_ROOT"
+	commit_and_push "Rename note: $RENAME_OLD -> $NEW_REL"
 	exit 0
 fi
 

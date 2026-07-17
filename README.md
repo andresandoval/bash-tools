@@ -158,6 +158,8 @@ add-notes garagehub/daily-standup                      # from the clipboard (def
 add-notes garagehub/daily-standup/jun-12-2026.md       # backfill a past note (exact filename)
 add-notes garagehub/design-review --title "Kickoff"    # optional entry title, shown in the UI
 add-notes --delete garagehub/daily-standup/jun-12-2026.md  # delete a note (+reindex, commit)
+add-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro  # move, keep name
+add-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md  # exact rename
 add-notes --rebuild                                    # refresh ./.web + index, no note added
 ```
 
@@ -182,6 +184,10 @@ add-notes --rebuild                                    # refresh ./.web + index,
   skip), prunes emptied folders, rebuilds the index, and commits. `--rebuild`
   force-redeploys `./.web` and rebuilds the index without adding a note — use it to
   pick up a tool update (or repair `.web`) in a repo you're only reading.
+- `--rename OLD NEW` moves or renames a note: NEW ending in `.md` is the exact target;
+  otherwise NEW is a destination folder and the file keeps its name. The note's
+  frontmatter title (and, on a filename change, its date) follows the new location;
+  an existing target is never overwritten.
 - Tab-completion drills through the path (directories under the current repo) and the
   flags, and completes note files after `--delete`; enabled automatically via
   `functions/add-notes-completion.bash`. Requires `python3` and `git`.
@@ -237,3 +243,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-07-16 | Add `CLAUDE.md` (AI session context, imports `AGENTS.md`) and `.docs/dev/` design specs (starting with `add-notes`) |
 | 2026-07-16 | `add-notes`: fix web UI sidebar ordering — notes now sort chronologically (newest first) instead of alphabetically by date string |
 | 2026-07-17 | `add-notes`: add `--rebuild` (refresh `.web` + index without adding a note), `--delete PATH` (remove a note, reindex, commit), and optional `--title TEXT` (entry title shown as `date — title` in the UI, stored as frontmatter `label`) |
+| 2026-07-17 | `add-notes`: add `--rename OLD NEW` (move/rename a note; folder NEW keeps the filename, `.md` NEW renames exactly; frontmatter title/date follow the new location) |

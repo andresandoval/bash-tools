@@ -19,6 +19,7 @@ tools/add-notes/                       # support assets (NOT scanned as a comman
   lib/clean_md.py                      #   deterministic Markdown cleanup + frontmatter (stdlib)
   lib/html2md.py                       #   rich-clipboard HTML → Markdown (stdlib html.parser)
   lib/build_index.py                   #   walks notes → writes <repo>/.web/notes-data.js
+  lib/refront.py                       #   in-place frontmatter value rewrite (for --rename)
   web/                                 #   .web TEMPLATE deployed into each notes repo
     index.html  app.js  styles.css  vendor/marked.min.js
 functions/add-notes-completion.bash    # auto-sourced tab-completion (cwd-aware path drill-down)
@@ -34,6 +35,7 @@ from the managed `~/.local/bin/bash-tools/.bashrc`.
 ```
 add-notes PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
 add-notes --delete PATH [--no-push]
+add-notes --rename OLD NEW [--no-push]
 add-notes --rebuild [--no-push]
 ```
 
@@ -50,6 +52,16 @@ add-notes --rebuild [--no-push]
   fallback), prune emptied parent dirs, rebuild the index, commit
   (`Delete note: <path>`). Confirmation prompt; `ADD_NOTES_DELETE=yes|no` skips it.
   Refuses non-`.md` paths and anything under `.git`/`.web`.
+- `--rename OLD NEW` = move/rename one note. OLD resolves like `--delete`
+  (literal, then slugified). NEW ending in `.md` is the exact target (segments +
+  stem slugified); otherwise NEW is a destination folder and the file keeps its
+  name. Refuses to overwrite an existing target (no confirmation prompt — a
+  rename is reversible). Frontmatter is refreshed via `lib/refront.py`: `title`
+  always follows the new location; `date` is rewritten only when the filename
+  stem changed (the index prefers frontmatter `date` over the filename); `label`,
+  `created`, and unknown keys are preserved byte-for-byte. Then prune emptied
+  dirs, reindex, commit (`Rename note: OLD -> NEW`). Takes two arguments, so
+  there is no `--rename=` form.
 - `--rebuild` = force-redeploy `.web/` from the tool template (ignores the
   `.tool-version` gate, so it also repairs a modified `.web`), rebuild the index,
   commit (`Rebuild notes web UI (tool version X)`). No note involved. Uncommitted
@@ -77,6 +89,8 @@ add-notes --rebuild [--no-push]
 
 Delete mode runs the same preconditions (repo root, clean tree, identity), then
 confirms, removes the file, prunes now-empty parent dirs, reindexes, and commits.
+Rename mode runs the preconditions, moves the file (creating target dirs, pruning
+emptied source dirs), refreshes frontmatter (`refront.py`), reindexes, and commits.
 Rebuild mode runs the preconditions, force-deploys `.web/`, reindexes, and commits.
 
 Clipboard is cross-platform: WSL/Windows `powershell.exe Get-Clipboard` (forced UTF-8
