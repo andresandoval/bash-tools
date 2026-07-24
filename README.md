@@ -46,7 +46,7 @@ bash-tools/
     ├── compare-copy.sh
     ├── copy-realpath.sh
     ├── git-prune-local.sh
-    ├── list-merged-branches.sh
+    ├── git-list-merged-branches.sh
     ├── nvidia-prime-run.sh
     ├── add-notes.sh
     └── add-notes/            # support assets for add-notes (lib/, web/ — not a command)
@@ -143,7 +143,7 @@ Each enabled tool becomes a command named after its file (minus `.sh`).
 | `compare-copy` | `tools/compare-copy.sh` | Compare a file copy between a target and source directory |
 | `copy-realpath` | `tools/copy-realpath.sh` | Copy a file's absolute path to the clipboard (`xclip`) |
 | `git-prune-local` | `tools/git-prune-local.sh` | Prune local Git branches (`--force`/`-f` to force-delete) |
-| `list-merged-branches` | `tools/list-merged-branches.sh` | Read-only list of local/remote branches safe to delete: merged or squash-merged into the default branch with no commits after the merge |
+| `git-list-merged-branches` | `tools/git-list-merged-branches.sh` | Read-only list of local/remote branches safe to delete: merged or squash-merged into the default branch with no commits after the merge |
 | `nvidia-prime-run` | `tools/nvidia-prime-run.sh` | Run a command on the NVIDIA GPU via PRIME render offload |
 | `add-notes` | `tools/add-notes.sh` | Capture meeting notes as clean Markdown under a freeform path in the current dir, with a built-in tree search UI and git auto-commit |
 
@@ -259,4 +259,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-07-17 | `add-notes`: web UI sidebar is now resizable (drag divider, width persisted, double-click to reset) and scrolls horizontally so long names are fully visible |
 | 2026-07-24 | Add `environment/wsl-terminal.bash` (WSL tab title + Windows Terminal same-directory tab duplication); remove root `title.sh` prototype |
 | 2026-07-24 | `setup.sh`: print post-setup hints from sibling `<filename>.hint` Markdown files; add `environment/wsl-terminal.bash.hint` (Windows Terminal settings for title + same-dir duplication) |
-| 2026-07-24 | Add `list-merged-branches` tool: read-only report of local/remote branches safe to delete (merged by ancestry or squash-merged via `git cherry`; flags branches with new commits after a squash merge as not safe; each entry shows the branch author, merge target, merging commit, and date) |
+| 2026-07-24 | Add `git-list-merged-branches` tool: read-only report of local/remote branches safe to delete (merged by ancestry or squash-merged via `git cherry`; flags branches with new commits after a squash merge as not safe; each entry shows the branch author, merge target, merging commit, and date) |
