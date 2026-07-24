@@ -207,7 +207,9 @@ Append to the bottom of the §9 changelog table:
 - [ ] **Step 6: Verify docs consistency**
 
 Run: `grep -rn "title.sh" README.md AGENTS.md CLAUDE.md; grep -c "wsl-terminal.bash" README.md AGENTS.md`
-Expected: the first grep matches nothing (exit 1); the second prints `3` for README.md and `1` for AGENTS.md.
+Expected: the first grep's only match is the new §9 changelog row (which deliberately
+records the removal of `title.sh`) — no other reference remains; the second prints `3`
+for README.md and `1` for AGENTS.md.
 
 Do **not** commit yet.
 
