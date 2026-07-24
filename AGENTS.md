@@ -117,6 +117,7 @@ When creating Git commits, follow these rules:
 | `environment/flutter-env.bash` | sourced | Flutter / Android SDK env + PATH |
 | `environment/golang-env.bash` | sourced | Go env (`GOPATH`, `GOROOT`) + PATH |
 | `environment/git-prompt.bash` | sourced | two-line Catppuccin git-aware prompt |
+| `environment/wsl-terminal.bash` | sourced | WSL: dynamic tab title + Windows Terminal same-dir tab/pane duplication |
 | `functions/git-navigation.bash` | sourced | `goto-git-root` function |
 | `functions/add-notes-completion.bash` | sourced | tab-completion for the `add-notes` command |
 | `tools/age-pdf.sh` | command `age-pdf` | age a PDF to look like an old scan |

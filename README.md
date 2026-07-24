@@ -31,7 +31,8 @@ bash-tools/
 ├── environment/              # *.bash -- sourced from ~/.bashrc (PATH / env exports)
 │   ├── flutter-env.bash
 │   ├── golang-env.bash
-│   └── git-prompt.bash
+│   ├── git-prompt.bash
+│   └── wsl-terminal.bash
 ├── .docs/
 │   └── dev/                  # design specs for multi-file tools (not scanned by setup.sh)
 │       └── add-notes.md
@@ -203,6 +204,7 @@ add-notes --rebuild                                    # refresh ./.web + index,
 | `environment/flutter-env.bash` | environment | Flutter + Android SDK env vars and PATH |
 | `environment/golang-env.bash` | environment | Go env (`GOPATH`, `GOROOT`) and PATH |
 | `environment/git-prompt.bash` | environment | Two-line, Git-aware Catppuccin Macchiato prompt |
+| `environment/wsl-terminal.bash` | environment | WSL: tab title follows `cd`; Windows Terminal duplicates tabs/panes in the same directory |
 | `functions/git-navigation.bash` | function | `goto-git-root` -- cd to the current repo root |
 | `functions/add-notes-completion.bash` | function | Tab-completion for the `add-notes` command (cwd-aware) |
 
@@ -247,3 +249,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-07-17 | `add-notes`: add `--rebuild` (refresh `.web` + index without adding a note), `--delete PATH` (remove a note, reindex, commit), and optional `--title TEXT` (entry title shown as `date — title` in the UI, stored as frontmatter `label`) |
 | 2026-07-17 | `add-notes`: add `--rename OLD NEW` (move/rename a note; folder NEW keeps the filename, `.md` NEW renames exactly; frontmatter title/date follow the new location) |
 | 2026-07-17 | `add-notes`: web UI sidebar is now resizable (drag divider, width persisted, double-click to reset) and scrolls horizontally so long names are fully visible |
+| 2026-07-24 | Add `environment/wsl-terminal.bash` (WSL tab title + Windows Terminal same-directory tab duplication); remove root `title.sh` prototype |
