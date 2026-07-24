@@ -1,0 +1,24 @@
+# wsl-terminal — Windows Terminal settings
+
+The sibling script tells Windows Terminal the tab title and the working
+directory on every prompt. Windows Terminal needs the settings below to honor
+them (open the JSON settings with Ctrl+Shift+,).
+
+## Same-directory tab / pane duplication
+
+- Duplicate tab: Ctrl+Shift+D (the default `duplicateTab` action) opens in the
+  current directory.
+- Split pane: add `"splitMode": "duplicate"` to a `splitPane` action, e.g.
+  `{ "command": { "action": "splitPane", "split": "auto", "splitMode": "duplicate" }, "keys": "alt+shift+d" }`
+- Ref: https://learn.microsoft.com/en-us/windows/terminal/tutorials/new-tab-same-directory
+
+## Dynamic tab title
+
+- In the profile used for this distro (e.g. Ubuntu), set
+  `"suppressApplicationTitle": false` so the title set by the shell is not
+  suppressed.
+- At top level, set `"showTerminalTitleInTitlebar": true` — the title bar then
+  shows the selected tab's title instead of "Windows Terminal". Changing this
+  requires starting a new terminal instance.
+- Refs: https://learn.microsoft.com/en-us/windows/terminal/tutorials/tab-title
+  and https://learn.microsoft.com/en-us/windows/terminal/customize-settings/appearance#use-active-terminal-title-as-application-title

@@ -25,6 +25,9 @@ setup.sh               → the only entry point; installs/reconciles everything
 - Files in `aliases/`, `environment/`, and `functions/` are **sourced** into the shell.
 - Files in `tools/` become **commands**: the command name is the filename with `.sh`
   stripped (e.g. `tools/git-prune-local.sh` → the `git-prune-local` command).
+- A selectable file may have a sibling `<filename>.hint` Markdown file (e.g.
+  `environment/wsl-terminal.bash.hint`); `setup.sh` prints it after every run in
+  which the file is enabled. Hint files are never selectable themselves.
 
 ## How `setup.sh` works
 
@@ -76,6 +79,13 @@ After running, open a new shell or `source ~/.bashrc`.
 2. Make it executable: `chmod +x tools/your-tool.sh` (also commit the executable bit).
 3. Run `./setup.sh` and select it. The command name will be the filename minus `.sh`.
 
+**A post-setup hint for any of the above:**
+1. Create a sibling Markdown file named after the full filename plus `.hint`
+   (e.g. `environment/wsl-terminal.bash.hint`, `tools/add-notes.sh.hint`).
+2. `setup.sh` prints it after every run in which the file is enabled — use it
+   for follow-up steps outside the shell (OS settings, app configuration).
+   Hint files are never selectable; the scanner only matches `*.bash` / `*.sh`.
+
 ## Conventions
 
 - **Bash style:** start scripts with `#!/usr/bin/env bash` and `set -euo pipefail`.
@@ -118,6 +128,7 @@ When creating Git commits, follow these rules:
 | `environment/golang-env.bash` | sourced | Go env (`GOPATH`, `GOROOT`) + PATH |
 | `environment/git-prompt.bash` | sourced | two-line Catppuccin git-aware prompt |
 | `environment/wsl-terminal.bash` | sourced | WSL: dynamic tab title + Windows Terminal same-dir tab/pane duplication |
+| `environment/wsl-terminal.bash.hint` | hint (not selectable) | Windows Terminal settings printed by `setup.sh` after runs with `wsl-terminal.bash` enabled |
 | `functions/git-navigation.bash` | sourced | `goto-git-root` function |
 | `functions/add-notes-completion.bash` | sourced | tab-completion for the `add-notes` command |
 | `tools/age-pdf.sh` | command `age-pdf` | age a PDF to look like an old scan |

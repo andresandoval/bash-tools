@@ -842,6 +842,35 @@ ensure_bashrc_source() {
 }
 
 # ------------------------------------------------------------------------------
+# Print post-setup hints.
+#
+# A selectable file may ship a sibling "<filename>.hint" Markdown file holding
+# follow-up steps that live outside the shell (e.g. Windows Terminal settings
+# for environment/wsl-terminal.bash). The hints of all currently enabled items
+# are printed after the closing message on every run, so they also serve as
+# reminders. When no enabled item has a hint, nothing is printed.
+# ------------------------------------------------------------------------------
+
+print_post_setup_hints() {
+    local item hint_file line printed_header=0
+
+    for item in "${SELECTED_SOURCES[@]}" "${SELECTED_TOOLS[@]}"; do
+        hint_file="${REPO_ROOT}/${item}.hint"
+        [[ -f "${hint_file}" ]] || continue
+
+        if (( printed_header == 0 )); then
+            printf '\nHints:\n'
+            printed_header=1
+        fi
+
+        printf '\n  %s:\n' "${item##*/}"
+        while IFS= read -r line || [[ -n "${line}" ]]; do
+            printf '    %s\n' "${line}"
+        done < "${hint_file}"
+    done
+}
+
+# ------------------------------------------------------------------------------
 # Main execution flow.
 # ------------------------------------------------------------------------------
 
@@ -866,6 +895,8 @@ main() {
     printf '\nDone.\n'
     printf 'Open a new shell or run:\n'
     printf '  source ~/.bashrc\n'
+
+    print_post_setup_hints
 }
 
 main "$@"

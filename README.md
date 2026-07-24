@@ -221,6 +221,12 @@ add-notes --rebuild                                    # refresh ./.web + index,
 2. Make it executable: `chmod +x tools/your-tool.sh` (commit the executable bit).
 3. Run `./setup.sh` and select it. The command name is the filename minus `.sh`.
 
+**A post-setup hint:** any alias/env/function/tool file may have a sibling
+`<filename>.hint` Markdown file (e.g. `environment/wsl-terminal.bash.hint`).
+`setup.sh` prints it after every run in which the file is enabled — handy for
+follow-up steps outside the shell, like Windows Terminal settings. Hint files
+never appear in the selector.
+
 Conventions for new scripts: start with `#!/usr/bin/env bash` and `set -euo pipefail`,
 provide a usage/help block, and commit using Conventional Commits with a scope
 (for example, `feat(git-prompt): ...`, `chore(setup): ...`).
@@ -250,3 +256,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-07-17 | `add-notes`: add `--rename OLD NEW` (move/rename a note; folder NEW keeps the filename, `.md` NEW renames exactly; frontmatter title/date follow the new location) |
 | 2026-07-17 | `add-notes`: web UI sidebar is now resizable (drag divider, width persisted, double-click to reset) and scrolls horizontally so long names are fully visible |
 | 2026-07-24 | Add `environment/wsl-terminal.bash` (WSL tab title + Windows Terminal same-directory tab duplication); remove root `title.sh` prototype |
+| 2026-07-24 | `setup.sh`: print post-setup hints from sibling `<filename>.hint` Markdown files; add `environment/wsl-terminal.bash.hint` (Windows Terminal settings for title + same-dir duplication) |
