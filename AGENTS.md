@@ -137,6 +137,7 @@ When creating Git commits, follow these rules:
 | `tools/compare-copy.sh` | command `compare-copy` | compare a file copy between dirs |
 | `tools/copy-realpath.sh` | command `copy-realpath` | copy a file's absolute path to clipboard |
 | `tools/git-prune-local.sh` | command `git-prune-local` | prune local git branches |
+| `tools/list-merged-branches.sh` | command `list-merged-branches` | read-only list of local/remote branches safe to delete (merged or squash-merged into the default branch, no commits after merge) |
 | `tools/nvidia-prime-run.sh` | command `nvidia-prime-run` | run a command on the NVIDIA GPU (PRIME offload) |
 | `tools/add-notes.sh` | command `add-notes` | capture meeting notes as clean Markdown under a freeform path + tree search UI, in any dir |
 | `tools/add-notes/` | assets (not a command) | `lib/` Python helpers + `web/` UI template for `add-notes` |
