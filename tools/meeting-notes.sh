@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
-# add-notes — store AI meeting notes as clean Markdown in the current directory,
+# meeting-notes — store AI meeting notes as clean Markdown in the current directory,
 # then commit (and push if a remote exists). The directory you run this in is the
 # notes repository: it is git-initialized on demand and gets a self-contained
 # `.web/` search UI deployed into it.
 #
-# You choose the structure: PATH is a freeform, multi-level path (e.g.
+# Every invocation needs one mode flag: --add, --delete, --rename, or --rebuild.
+#
+# You choose the structure: --add takes a freeform, multi-level path (e.g.
 # project/team/standup). Notes are saved to <PATH>/<date>.md, or to an exact file
 # when PATH ends in .md (e.g. project/standup/recap-26-02-12.md, for past meetings).
 # Formatted (HTML) clipboard content is converted to Markdown automatically.
@@ -15,7 +17,7 @@ set -euo pipefail
 # --- Resolve our own location (works through the bash-tools symlink) --------
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 TOOLS_DIR="$(dirname "$SELF")"            # .../bash-tools/tools
-ASSET_DIR="$TOOLS_DIR/add-notes"          # support assets (lib/, web/)
+ASSET_DIR="$TOOLS_DIR/meeting-notes"      # support assets (lib/, web/)
 LIB="$ASSET_DIR/lib"
 WEB_TEMPLATE="$ASSET_DIR/web"
 TOOL_REPO="$(dirname "$TOOLS_DIR")"       # bash-tools repo root (for versioning)
@@ -24,33 +26,28 @@ NOTES_ROOT="$(pwd)"
 
 usage() {
 	cat <<'EOF'
-Usage: add-notes PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
-       add-notes --delete PATH [--no-push]
-       add-notes --rename OLD NEW [--no-push]
-       add-notes --rebuild [--no-push]
+Usage: meeting-notes --add PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
+       meeting-notes --delete PATH [--no-push]
+       meeting-notes --rename OLD NEW [--no-push]
+       meeting-notes --rebuild [--no-push]
 
-Store meeting notes as clean Markdown at PATH inside the current directory's notes
+Store meeting notes as clean Markdown inside the current directory's notes
 repository, then commit (and push if a remote is configured).
 
-Arguments:
-  PATH   Destination path describing your own (multi-level) structure:
-           project/team/standup        -> project/team/standup/<date>.md
-           project/standup/recap.md     a .md ending sets the exact filename,
-                                         handy for backfilling past meetings
-         Each folder segment is slugified (lowercase, hyphenated); the original
-         text is kept in the note's frontmatter title.
+Exactly one mode flag is required: --add, --delete, --rename, or --rebuild.
 
-Options:
-  --title TEXT       Optional human title for the entry. Shown next to the date in
-                     the web UI (e.g. "jul-17-2026 — Kickoff") and searchable.
-                     Without it the entry displays as before (date only).
-  --from FILE        Read the raw notes from FILE.
-  --from-clipboard   Read the raw notes from the clipboard (the default if no
-                     source flag is given). Formatted (HTML) clipboard content is
-                     converted to Markdown automatically; otherwise plain text.
+Modes:
+  --add PATH         Add a note at PATH, a destination path describing your own
+                     (multi-level) structure:
+                       project/team/standup       -> project/team/standup/<date>.md
+                       project/standup/recap.md    a .md ending sets the exact
+                                                    filename, handy for backfilling
+                                                    past meetings
+                     Each folder segment is slugified (lowercase, hyphenated); the
+                     original text is kept in the note's frontmatter title.
   --delete PATH      Delete the note file at PATH, rebuild the web index, and
                      commit. Asks for confirmation first (skip the prompt with
-                     ADD_NOTES_DELETE=yes|no).
+                     MEETING_NOTES_DELETE=yes|no).
   --rename OLD NEW   Move/rename the note at OLD. NEW ending in .md is the exact
                      target file; otherwise NEW is a destination folder and the
                      file keeps its name. The note's frontmatter title (and, when
@@ -59,28 +56,39 @@ Options:
   --rebuild          Redeploy ./.web from the tool template and rebuild the search
                      index without adding a note (e.g. after a tool update, or to
                      repair a modified .web). Commits the result.
-  --no-push          Commit but do not push (also via ADD_NOTES_NO_PUSH=1).
+
+Options for --add:
+  --title TEXT       Optional human title for the entry. Shown next to the date in
+                     the web UI (e.g. "jul-17-2026 — Kickoff") and searchable.
+                     Without it the entry displays as before (date only).
+  --from FILE        Read the raw notes from FILE.
+  --from-clipboard   Read the raw notes from the clipboard (the default if no
+                     source flag is given). Formatted (HTML) clipboard content is
+                     converted to Markdown automatically; otherwise plain text.
+
+Other options:
+  --no-push          Commit but do not push (also via MEETING_NOTES_NO_PUSH=1).
   --version          Print the tool version and exit.
   -h, --help         Show this help.
 
 Behavior:
   - The current directory is the notes repo and must be the git repository root
     (running from a subdirectory exits with an error). If it is not a git repo you
-    are asked to initialize one (skip with ADD_NOTES_INIT=yes|no); if it already is,
-    the working tree must be clean.
+    are asked to initialize one (skip with MEETING_NOTES_INIT=yes|no); if it already
+    is, the working tree must be clean.
   - A self-contained search UI is deployed/refreshed in ./.web (open index.html).
   - If the target note already exists you are asked to override, append, or cancel
-    (override non-interactively with ADD_NOTES_ON_EXISTING=override|append|cancel).
+    (override non-interactively with MEETING_NOTES_ON_EXISTING=override|append|cancel).
 
 Examples:
-  add-notes garagehub/daily-standup
-  add-notes garagehub/auth/design-review --from ./notes.md
-  add-notes garagehub/daily-standup/jun-12-2026.md   # backfill a past note
-  add-notes garagehub/design-review --title "Auth kickoff"
-  add-notes --delete garagehub/daily-standup/jun-12-2026.md
-  add-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro
-  add-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md
-  add-notes --rebuild
+  meeting-notes --add garagehub/daily-standup
+  meeting-notes --add garagehub/auth/design-review --from ./notes.md
+  meeting-notes --add garagehub/daily-standup/jun-12-2026.md   # backfill a past note
+  meeting-notes --add garagehub/design-review --title "Auth kickoff"
+  meeting-notes --delete garagehub/daily-standup/jun-12-2026.md
+  meeting-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro
+  meeting-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md
+  meeting-notes --rebuild
 
 Tab completion is installed automatically via bash-tools (functions/).
 EOF
@@ -157,7 +165,7 @@ ensure_notes_repo() {
 		toplevel="$(git -C "$NOTES_ROOT" rev-parse --show-toplevel)"
 		here="$(cd "$NOTES_ROOT" && pwd -P)"
 		if [ "$here" != "$toplevel" ]; then
-			echo "Error: add-notes must be run from the root of the git repository." >&2
+			echo "Error: meeting-notes must be run from the root of the git repository." >&2
 			echo "       Repository root: $toplevel" >&2
 			echo "       Current dir:     $here" >&2
 			echo "       cd to the repository root and try again." >&2
@@ -169,11 +177,11 @@ ensure_notes_repo() {
 		fi
 		if [ -n "$dirt" ]; then
 			echo "Error: git working tree is not clean — commit or stash first." >&2
-			echo "       (add-notes commits each note on its own, so the tree must start clean.)" >&2
+			echo "       (meeting-notes commits each note on its own, so the tree must start clean.)" >&2
 			exit 1
 		fi
 	else
-		local ans="${ADD_NOTES_INIT:-}"
+		local ans="${MEETING_NOTES_INIT:-}"
 		if [ -z "$ans" ]; then
 			echo "This directory is not a git repository: $NOTES_ROOT"
 			printf "Initialize one here? [y/N] "
@@ -244,14 +252,9 @@ commit_and_push() {
 }
 
 # --- Parse arguments --------------------------------------------------------
-if [ "$#" -eq 0 ]; then
-	usage
-	exit 0
-fi
-
 NO_PUSH=0
-[ -n "${ADD_NOTES_NO_PUSH:-}" ] && NO_PUSH=1
-MODE="add" # add | delete | rename | rebuild
+[ -n "${MEETING_NOTES_NO_PUSH:-}" ] && NO_PUSH=1
+MODE="" # "" (none yet) | add | delete | rename | rebuild
 DEST_PATH=""
 DELETE_PATH=""
 RENAME_OLD=""
@@ -266,7 +269,7 @@ conflict() {
 }
 
 mode_conflict() {
-	echo "Error: --rebuild, --delete, and --rename are mutually exclusive (and may be given only once)." >&2
+	echo "Error: --add, --rebuild, --delete, and --rename are mutually exclusive (and may be given only once)." >&2
 	exit 1
 }
 
@@ -315,8 +318,27 @@ while [ "$#" -gt 0 ]; do
 			exit 1
 		}
 		;;
+	--add)
+		[ -n "$MODE" ] && mode_conflict
+		shift
+		DEST_PATH="${1:-}"
+		[ -z "$DEST_PATH" ] && {
+			echo "Error: --add requires a PATH argument." >&2
+			exit 1
+		}
+		MODE="add"
+		;;
+	--add=*)
+		[ -n "$MODE" ] && mode_conflict
+		DEST_PATH="${1#--add=}"
+		[ -z "$DEST_PATH" ] && {
+			echo "Error: --add requires a PATH argument." >&2
+			exit 1
+		}
+		MODE="add"
+		;;
 	--delete)
-		[ "$MODE" != "add" ] && mode_conflict
+		[ -n "$MODE" ] && mode_conflict
 		shift
 		DELETE_PATH="${1:-}"
 		[ -z "$DELETE_PATH" ] && {
@@ -326,7 +348,7 @@ while [ "$#" -gt 0 ]; do
 		MODE="delete"
 		;;
 	--delete=*)
-		[ "$MODE" != "add" ] && mode_conflict
+		[ -n "$MODE" ] && mode_conflict
 		DELETE_PATH="${1#--delete=}"
 		[ -z "$DELETE_PATH" ] && {
 			echo "Error: --delete requires a PATH argument." >&2
@@ -335,7 +357,7 @@ while [ "$#" -gt 0 ]; do
 		MODE="delete"
 		;;
 	--rename)
-		[ "$MODE" != "add" ] && mode_conflict
+		[ -n "$MODE" ] && mode_conflict
 		RENAME_OLD="${2:-}"
 		RENAME_NEW="${3:-}"
 		if [ -z "$RENAME_OLD" ] || [ -z "$RENAME_NEW" ]; then
@@ -346,7 +368,7 @@ while [ "$#" -gt 0 ]; do
 		MODE="rename"
 		;;
 	--rebuild)
-		[ "$MODE" != "add" ] && mode_conflict
+		[ -n "$MODE" ] && mode_conflict
 		MODE="rebuild"
 		;;
 	-*)
@@ -354,21 +376,24 @@ while [ "$#" -gt 0 ]; do
 		exit 1
 		;;
 	*)
-		if [ -z "$DEST_PATH" ]; then
-			DEST_PATH="$1"
-		else
-			echo "Error: unexpected argument: $1 (PATH is a single argument; use --from for a file)" >&2
-			exit 1
-		fi
+		echo "Error: unexpected argument: $1 (use --add PATH to add a note)" >&2
+		exit 1
 		;;
 	esac
 	shift
 done
 
+# --- A mode flag is mandatory -------------------------------------------------
+if [ -z "$MODE" ]; then
+	echo "Error: a mode flag is required (--add, --delete, --rename, or --rebuild)." >&2
+	echo >&2
+	usage >&2
+	exit 1
+fi
+
 # --- Validate flag/mode combinations -----------------------------------------
 if [ "$MODE" != "add" ]; then
 	extra=()
-	[ -n "$DEST_PATH" ] && extra+=("PATH")
 	[ -n "$SOURCE_MODE" ] && extra+=("--from/--from-clipboard")
 	[ -n "$ENTRY_TITLE" ] && extra+=("--title")
 	if [ "${#extra[@]}" -gt 0 ]; then
@@ -447,7 +472,7 @@ if [ "$MODE" = "delete" ]; then
 		fi
 	fi
 
-	ans="${ADD_NOTES_DELETE:-}"
+	ans="${MEETING_NOTES_DELETE:-}"
 	if [ -z "$ans" ]; then
 		printf "Delete %s? [y/N] " "$DELETE_PATH"
 		if [ -r /dev/tty ]; then read -r ans </dev/tty || ans="n"; else read -r ans || ans="n"; fi
@@ -600,12 +625,7 @@ if [ "$MODE" = "rename" ]; then
 fi
 
 # --- Add mode ----------------------------------------------------------------
-if [ -z "$DEST_PATH" ]; then
-	echo "Error: PATH is required." >&2
-	echo >&2
-	usage >&2
-	exit 1
-fi
+# DEST_PATH is guaranteed non-empty here: --add rejects a missing value.
 [ -z "$SOURCE_MODE" ] && SOURCE_MODE="clipboard"
 
 # --- Validate and parse the destination path --------------------------------
@@ -682,7 +702,7 @@ else
 		: # plain text (may be empty → caught by the not_blank check below)
 	else
 		echo "Error: no clipboard tool found. Install xclip or wl-clipboard," >&2
-		echo "       or pass a file: add-notes PATH --from FILE" >&2
+		echo "       or pass a file: meeting-notes --add PATH --from FILE" >&2
 		exit 1
 	fi
 fi
@@ -708,7 +728,7 @@ append_section() {
 }
 
 if [ -f "$FILE" ]; then
-	choice="${ADD_NOTES_ON_EXISTING:-}"
+	choice="${MEETING_NOTES_ON_EXISTING:-}"
 	if [ -z "$choice" ]; then
 		echo "A note already exists: ${FILE#"$NOTES_ROOT"/}"
 		printf "Override, append, or cancel? [o/a/c] "

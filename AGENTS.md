@@ -81,7 +81,7 @@ After running, open a new shell or `source ~/.bashrc`.
 
 **A post-setup hint for any of the above:**
 1. Create a sibling Markdown file named after the full filename plus `.hint`
-   (e.g. `environment/wsl-terminal.bash.hint`, `tools/add-notes.sh.hint`).
+   (e.g. `environment/wsl-terminal.bash.hint`, `tools/meeting-notes.sh.hint`).
 2. `setup.sh` prints it after every run in which the file is enabled — use it
    for follow-up steps outside the shell (OS settings, app configuration).
    Hint files are never selectable; the scanner only matches `*.bash` / `*.sh`.
@@ -130,7 +130,7 @@ When creating Git commits, follow these rules:
 | `environment/wsl-terminal.bash` | sourced | WSL: dynamic tab title + Windows Terminal same-dir tab/pane duplication |
 | `environment/wsl-terminal.bash.hint` | hint (not selectable) | Windows Terminal settings printed by `setup.sh` after runs with `wsl-terminal.bash` enabled |
 | `functions/git-navigation.bash` | sourced | `goto-git-root` function |
-| `functions/add-notes-completion.bash` | sourced | tab-completion for the `add-notes` command |
+| `functions/meeting-notes-completion.bash` | sourced | tab-completion for the `meeting-notes` command |
 | `tools/age-pdf.sh` | command `age-pdf` | age a PDF to look like an old scan |
 | `tools/appimage-install.sh` | command `appimage-install` | install an AppImage as a desktop app |
 | `tools/cleanup-old-kernels.sh` | command `cleanup-old-kernels` | remove old kernels (dnf) |
@@ -139,18 +139,18 @@ When creating Git commits, follow these rules:
 | `tools/git-prune-local.sh` | command `git-prune-local` | prune local git branches |
 | `tools/git-list-merged-branches.sh` | command `git-list-merged-branches` | read-only list of local/remote branches safe to delete (merged or squash-merged into the default branch, no commits after merge) |
 | `tools/nvidia-prime-run.sh` | command `nvidia-prime-run` | run a command on the NVIDIA GPU (PRIME offload) |
-| `tools/add-notes.sh` | command `add-notes` | capture meeting notes as clean Markdown under a freeform path + tree search UI, in any dir |
-| `tools/add-notes/` | assets (not a command) | `lib/` Python helpers + `web/` UI template for `add-notes` |
+| `tools/meeting-notes.sh` | command `meeting-notes` | capture meeting notes as clean Markdown under a freeform path + tree search UI, in any dir; requires a mode flag (`--add`/`--delete`/`--rename`/`--rebuild`) |
+| `tools/meeting-notes/` | assets (not a command) | `lib/` Python helpers + `web/` UI template for `meeting-notes` |
 
 ### Multi-file tools
 
 `setup.sh` only exposes top-level `tools/*.sh` files, so a tool that needs more than one
-file keeps its helpers in a sibling `tools/<name>/` directory (e.g. `tools/add-notes/`),
+file keeps its helpers in a sibling `tools/<name>/` directory (e.g. `tools/meeting-notes/`),
 which the scanner ignores. The entry script resolves its own real path with
 `readlink -f "${BASH_SOURCE[0]}"` (so it works through the installed symlink) and reads
 its assets from there. Such a tool still writes nothing into this repo — it operates on
 the user's working directory only.
 
 Each multi-file tool has a design spec in `.docs/dev/<name>.md` (e.g.
-`.docs/dev/add-notes.md`). Read it before changing the tool, and keep it updated when
+`.docs/dev/meeting-notes.md`). Read it before changing the tool, and keep it updated when
 the tool's interface or behavior changes.

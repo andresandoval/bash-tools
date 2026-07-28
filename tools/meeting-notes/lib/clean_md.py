@@ -80,7 +80,7 @@ def clean_body(text: str) -> str:
 def frontmatter(title: str, date: str, created: str, label: str = "") -> str:
     """Build a YAML frontmatter block. Values are double-quoted and escaped.
 
-    `label` is the user's optional entry title (from `add-notes --title`); it is
+    `label` is the user's optional entry title (from `meeting-notes --title`); it is
     a separate key because `title` already holds the pre-slug path text.
     """
 

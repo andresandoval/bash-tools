@@ -1,11 +1,11 @@
-# add-notes — design spec
+# meeting-notes — design spec
 
-Specification and design record for the `add-notes` tool. Keep this document in sync
+Specification and design record for the `meeting-notes` tool. Keep this document in sync
 when the tool's interface or behavior changes (and add a README §9 changelog row).
 
 ## What the tool is
 
-`add-notes` is a bash-tools command that captures AI meeting notes as clean Markdown in
+`meeting-notes` is a bash-tools command that captures AI meeting notes as clean Markdown in
 whatever directory you run it in (that directory becomes a git-backed notes repo), and
 deploys a self-contained static search/browse web UI into it. It was originally built
 inside a single notes repo and then **decoupled** into this repo (`bash-tools`) so it
@@ -14,32 +14,39 @@ installs on `PATH` and can be used across many independent notes repos.
 ## Where everything lives (in this repo)
 
 ```
-tools/add-notes.sh                     # entry point → the `add-notes` command
-tools/add-notes/                       # support assets (NOT scanned as a command by setup.sh)
+tools/meeting-notes.sh                     # entry point → the `meeting-notes` command
+tools/meeting-notes/                       # support assets (NOT scanned as a command by setup.sh)
   lib/clean_md.py                      #   deterministic Markdown cleanup + frontmatter (stdlib)
   lib/html2md.py                       #   rich-clipboard HTML → Markdown (stdlib html.parser)
   lib/build_index.py                   #   walks notes → writes <repo>/.web/notes-data.js
   lib/refront.py                       #   in-place frontmatter value rewrite (for --rename)
   web/                                 #   .web TEMPLATE deployed into each notes repo
     index.html  app.js  styles.css  vendor/marked.min.js
-functions/add-notes-completion.bash    # auto-sourced tab-completion (cwd-aware path drill-down)
-README.md  §5 "add-notes"              # user docs
+functions/meeting-notes-completion.bash    # auto-sourced tab-completion (cwd-aware path drill-down)
+README.md  §5 "meeting-notes"              # user docs
 ```
 
-Installed via `./setup.sh` (select `add-notes` + `add-notes-completion`): a symlink at
-`~/.local/bin/bash-tools/add-notes` → `tools/add-notes.sh`, and the completion sourced
+Installed via `./setup.sh` (select `meeting-notes` + `meeting-notes-completion`): a symlink
+at `~/.local/bin/bash-tools/meeting-notes` → `tools/meeting-notes.sh`, and the completion sourced
 from the managed `~/.local/bin/bash-tools/.bashrc`.
 
 ## Command interface
 
 ```
-add-notes PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
-add-notes --delete PATH [--no-push]
-add-notes --rename OLD NEW [--no-push]
-add-notes --rebuild [--no-push]
+meeting-notes --add PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
+meeting-notes --delete PATH [--no-push]
+meeting-notes --rename OLD NEW [--no-push]
+meeting-notes --rebuild [--no-push]
 ```
 
-- `PATH` = your own freeform, multi-level structure. `garagehub/daily-standup` →
+Exactly one mode flag is required. There are **no positional arguments**: a bare word
+is rejected with `unexpected argument: X (use --add PATH to add a note)`, and finishing
+argument parsing with no mode set prints `a mode flag is required (--add, --delete,
+--rename, or --rebuild).` followed by the full help on stderr, exit **1**. Only
+`-h/--help` and `--version` exit 0 without doing work.
+
+- `--add PATH` = add a note. `PATH` is your own freeform, multi-level structure
+  (`--add=PATH` also works). `garagehub/daily-standup` →
   `garagehub/daily-standup/<today mmm-dd-yyyy>.md`. If `PATH` ends in `.md`
   (`garagehub/daily/jun-12-2026.md`) that exact filename is used (backfill past notes).
 - Each folder segment is **slugified**; the original text is kept in the note's
@@ -50,7 +57,7 @@ add-notes --rebuild [--no-push]
 - Source: `--from FILE`, or `--from-clipboard` (the default). Mutually exclusive.
 - `--delete PATH` = remove one note file (literal path, or its slugified form as a
   fallback), prune emptied parent dirs, rebuild the index, commit
-  (`Delete note: <path>`). Confirmation prompt; `ADD_NOTES_DELETE=yes|no` skips it.
+  (`Delete note: <path>`). Confirmation prompt; `MEETING_NOTES_DELETE=yes|no` skips it.
   Refuses non-`.md` paths and anything under `.git`/`.web`.
 - `--rename OLD NEW` = move/rename one note. OLD resolves like `--delete`
   (literal, then slugified). NEW ending in `.md` is the exact target (segments +
@@ -67,11 +74,12 @@ add-notes --rebuild [--no-push]
   commit (`Rebuild notes web UI (tool version X)`). No note involved. Uncommitted
   changes confined to `.web/` are tolerated — that is the repair case, and rebuild
   overwrites them anyway; dirt anywhere else still aborts.
-- The three modes are mutually exclusive; `--rebuild`/`--delete` reject PATH,
-  source flags, and `--title`. `--no-push` applies to all modes.
-- `--no-push` (or `ADD_NOTES_NO_PUSH=1`) commits without pushing. `--version`, `-h/--help`.
-- Env overrides for non-interactive runs: `ADD_NOTES_INIT=yes|no`,
-  `ADD_NOTES_ON_EXISTING=override|append|cancel`, `ADD_NOTES_DELETE=yes|no`.
+- The four modes are mutually exclusive and may each be given only once;
+  `--rebuild`/`--delete`/`--rename` reject the source flags and `--title`.
+  `--no-push` applies to all modes.
+- `--no-push` (or `MEETING_NOTES_NO_PUSH=1`) commits without pushing. `--version`, `-h/--help`.
+- Env overrides for non-interactive runs: `MEETING_NOTES_INIT=yes|no`,
+  `MEETING_NOTES_ON_EXISTING=override|append|cancel`, `MEETING_NOTES_DELETE=yes|no`.
 
 ## Runtime behavior
 
@@ -85,7 +93,7 @@ add-notes --rebuild [--no-push]
    `html2md.py`, clipboard2markdown-style) with plain-text fallback.
 6. Cleans (`clean_md.py`), writes note with frontmatter, prompts on same-file collision
    (override/append/cancel), rebuilds `.web/notes-data.js`, commits, and pushes only if
-   a remote/upstream exists (`commit_and_push`, shared by all three modes).
+   a remote/upstream exists (`commit_and_push`, shared by all four modes).
 
 Delete mode runs the same preconditions (repo root, clean tree, identity), then
 confirms, removes the file, prunes now-empty parent dirs, reindexes, and commits.
@@ -115,8 +123,18 @@ output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
   the pre-slug folder-path text on every existing note (and the index ignores it), so
   reusing it would have made old notes display their folder path as a title. A new key
   means zero migration; titles never affect sort order.
-- **Flags, not subcommands** (`--rebuild`, `--delete`) — keeps `PATH` fully freeform
-  with no reserved words.
+- **Flags, not subcommands** (`--add`, `--rebuild`, `--delete`, `--rename`) — keeps
+  `PATH` fully freeform with no reserved words.
+- **Every mode is an explicit flag, including `--add`** — the tool was originally
+  named `add-notes` with adding as the implicit default and `PATH` positional. The
+  rename to `meeting-notes` (2026-07-28) names the domain rather than one verb, so
+  adding became `--add PATH` alongside the other three modes. A missing mode flag is
+  an error rather than a help-and-exit-0, because it means an incomplete command
+  rather than a request for help. Dropping the positional argument also removed the
+  parser's "is this bare word a PATH or a stray token?" ambiguity.
+- **The `ADD_NOTES_*` env vars were renamed to `MEETING_NOTES_*` with no fallback** —
+  a silent fallback would leave two names live indefinitely; this is a personal tool
+  with a known set of callers.
 - **Resizable sidebar with horizontal scroll** — a drag divider between the tree
   and the content pane resizes the panel (width clamped to [160px, 60vw], persisted
   in `localStorage["notes-sidebar-w"]`, double-click resets); tree rows use
@@ -139,7 +157,7 @@ output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
 ```bash
 tmp=$(mktemp -d); cd "$tmp"
 printf '# T\n\n- a\n- b\n' > /tmp/raw.md
-ADD_NOTES_INIT=yes add-notes demo/team/standup --from /tmp/raw.md --no-push
+MEETING_NOTES_INIT=yes meeting-notes --add demo/team/standup --from /tmp/raw.md --no-push
 # open ./.web/index.html in a browser to see the tree UI
 ```
 

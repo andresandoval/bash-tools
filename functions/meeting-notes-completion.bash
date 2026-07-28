@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Tab-completion for the `add-notes` command. The PATH argument is completed as a
-# multi-level directory path under the current directory (the active notes repo),
-# so you can drill through your structure with Tab. Works in any directory.
+# Tab-completion for the `meeting-notes` command. The --add PATH value is completed
+# as a multi-level directory path under the current directory (the active notes
+# repo), so you can drill through your structure with Tab. Works in any directory.
 
-_add_notes_complete() {
+_meeting_notes_complete() {
 	local cur prev
 	cur="${COMP_WORDS[COMP_CWORD]}"
 	prev="${COMP_WORDS[COMP_CWORD - 1]}"
@@ -44,25 +44,13 @@ _add_notes_complete() {
 
 	# Flags.
 	if [[ "$cur" == -* ]]; then
-		COMPREPLY=($(compgen -W "--title --from --from-clipboard --delete --rename --rebuild --no-push --version --help" -- "$cur"))
+		COMPREPLY=($(compgen -W "--add --title --from --from-clipboard --delete --rename --rebuild --no-push --version --help" -- "$cur"))
 		return 0
 	fi
 
-	# Has a positional PATH already been given? If so, nothing more to complete.
-	local i w have_path=0
-	for ((i = 1; i < COMP_CWORD; i++)); do
-		w="${COMP_WORDS[i]}"
-		case "$w" in
-		--from | --title | --delete) ((i++)); continue ;; # skip their values
-		--rename) ((i += 2)); continue ;;                 # skip OLD and NEW
-		-*) continue ;;
-		*) have_path=1 ;;
-		esac
-	done
-	[ "$have_path" -eq 1 ] && return 0
-
-	# Complete the PATH as directories under the cwd (multi-level), skipping the
-	# repo's own .git/.web. Trailing slash + nospace lets you keep drilling down.
+	# Everything else — the --add PATH value and --rename's destination — is a
+	# directory path under the cwd (multi-level), skipping the repo's own
+	# .git/.web. Trailing slash + nospace lets you keep drilling down.
 	local d matches=()
 	while IFS= read -r d; do
 		case "$d" in .git | .git/* | .web | .web/*) continue ;; esac
@@ -75,4 +63,4 @@ _add_notes_complete() {
 	return 0
 }
 
-complete -o default -F _add_notes_complete add-notes
+complete -o default -F _meeting_notes_complete meeting-notes

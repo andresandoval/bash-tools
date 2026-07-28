@@ -240,7 +240,7 @@
 
 	/* ---- Init ---- */
 	if (!NOTES.length) {
-		main.innerHTML = '<p class="empty">No notes yet. Add one with <code>add-notes &lt;path&gt;</code>.</p>';
+		main.innerHTML = '<p class="empty">No notes yet. Add one with <code>meeting-notes --add &lt;path&gt;</code>.</p>';
 	} else {
 		renderSidebar();
 		showList(NOTES, "", null);

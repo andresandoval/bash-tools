@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rewrite selected frontmatter values of a note in place.
 
-Used by `add-notes --rename`: after a note moves, its `title` (and, when the
+Used by `meeting-notes --rename`: after a note moves, its `title` (and, when the
 filename stem changed, `date`) must follow the new location, while every other
 frontmatter line — label, created, anything unknown — stays byte-identical.
 Only the value of a targeted key is replaced; missing keys are not added, and

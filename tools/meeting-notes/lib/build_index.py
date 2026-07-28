@@ -6,7 +6,7 @@ Walks notes at any depth (<dir>/.../<name>.md) under a notes-repo root and write
 a plain script (rather than fetching JSON) lets the static UI work over file://
 with no server. Standard library only.
 
-The notes-repo root is taken from argv[1] (the directory `add-notes` is run in);
+The notes-repo root is taken from argv[1] (the directory `meeting-notes` is run in);
 it defaults to the current working directory.
 """
 

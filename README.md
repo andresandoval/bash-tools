@@ -35,10 +35,10 @@ bash-tools/
 │   └── wsl-terminal.bash
 ├── .docs/
 │   └── dev/                  # design specs for multi-file tools (not scanned by setup.sh)
-│       └── add-notes.md
+│       └── meeting-notes.md
 ├── functions/                # *.bash -- sourced from ~/.bashrc (shell functions)
 │   ├── git-navigation.bash
-│   └── add-notes-completion.bash
+│   └── meeting-notes-completion.bash
 └── tools/                    # *.sh -- exposed as commands on your PATH
     ├── age-pdf.sh
     ├── appimage-install.sh
@@ -48,11 +48,11 @@ bash-tools/
     ├── git-prune-local.sh
     ├── git-list-merged-branches.sh
     ├── nvidia-prime-run.sh
-    ├── add-notes.sh
-    └── add-notes/            # support assets for add-notes (lib/, web/ — not a command)
+    ├── meeting-notes.sh
+    └── meeting-notes/        # support assets for meeting-notes (lib/, web/ — not a command)
 ```
 
-> A `tools/<name>/` subdirectory (like `tools/add-notes/`) is **not** scanned as a
+> A `tools/<name>/` subdirectory (like `tools/meeting-notes/`) is **not** scanned as a
 > command — `setup.sh` only exposes top-level `tools/*.sh` files. Such directories are
 > the place to keep a multi-file tool's helper scripts and assets.
 
@@ -145,27 +145,31 @@ Each enabled tool becomes a command named after its file (minus `.sh`).
 | `git-prune-local` | `tools/git-prune-local.sh` | Prune local Git branches (`--force`/`-f` to force-delete) |
 | `git-list-merged-branches` | `tools/git-list-merged-branches.sh` | Read-only list of local/remote branches safe to delete: merged or squash-merged into the default branch with no commits after the merge |
 | `nvidia-prime-run` | `tools/nvidia-prime-run.sh` | Run a command on the NVIDIA GPU via PRIME render offload |
-| `add-notes` | `tools/add-notes.sh` | Capture meeting notes as clean Markdown under a freeform path in the current dir, with a built-in tree search UI and git auto-commit |
+| `meeting-notes` | `tools/meeting-notes.sh` | Capture meeting notes as clean Markdown under a freeform path in the current dir, with a built-in tree search UI and git auto-commit |
 
 Many tools provide a usage block; run them with `--help` where supported.
 
-### `add-notes` — meeting notes in any directory
+### `meeting-notes` — meeting notes in any directory
 
-Run `add-notes` inside any directory to turn it into a notes repository. The first
-argument is a freeform, multi-level **path** describing your own structure:
+Run `meeting-notes` inside any directory to turn it into a notes repository. Every
+invocation needs exactly one **mode flag**; `--add` takes a freeform, multi-level
+**path** describing your own structure:
 
 ```bash
-add-notes garagehub/daily-standup                      # -> garagehub/daily-standup/<date>.md
-add-notes garagehub/auth/design-review --from ./raw.md # multi-level, from a file
-add-notes garagehub/daily-standup                      # from the clipboard (default)
-add-notes garagehub/daily-standup/jun-12-2026.md       # backfill a past note (exact filename)
-add-notes garagehub/design-review --title "Kickoff"    # optional entry title, shown in the UI
-add-notes --delete garagehub/daily-standup/jun-12-2026.md  # delete a note (+reindex, commit)
-add-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro  # move, keep name
-add-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md  # exact rename
-add-notes --rebuild                                    # refresh ./.web + index, no note added
+meeting-notes --add garagehub/daily-standup                      # -> garagehub/daily-standup/<date>.md
+meeting-notes --add garagehub/auth/design-review --from ./raw.md # multi-level, from a file
+meeting-notes --add garagehub/daily-standup                      # from the clipboard (default)
+meeting-notes --add garagehub/daily-standup/jun-12-2026.md       # backfill a past note (exact filename)
+meeting-notes --add garagehub/design-review --title "Kickoff"    # optional entry title, shown in the UI
+meeting-notes --delete garagehub/daily-standup/jun-12-2026.md    # delete a note (+reindex, commit)
+meeting-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro  # move, keep name
+meeting-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md  # exact rename
+meeting-notes --rebuild                                          # refresh ./.web + index, no note added
 ```
 
+- Running it with **no mode flag** (or with a bare path instead of `--add PATH`) prints
+  the help with an error saying a flag is missing, and exits `1`. Only `--help` and
+  `--version` exit `0` without doing work.
 - The note is saved at `<PATH>/<date>.md`, or at the exact file when `PATH` ends in
   `.md`. Each folder segment is **slugified** (lowercase, hyphenated); the original
   text is kept in the note's frontmatter `title`.
@@ -185,17 +189,17 @@ add-notes --rebuild                                    # refresh ./.web + index,
 - `--title TEXT` attaches an optional human title to the entry (frontmatter `label`);
   the UI shows it next to the date (`jul-17-2026 — Kickoff`) and search matches it.
   Untitled entries display as before.
-- `--delete PATH` removes a note (asks for confirmation, `ADD_NOTES_DELETE=yes|no` to
-  skip), prunes emptied folders, rebuilds the index, and commits. `--rebuild`
+- `--delete PATH` removes a note (asks for confirmation, `MEETING_NOTES_DELETE=yes|no`
+  to skip), prunes emptied folders, rebuilds the index, and commits. `--rebuild`
   force-redeploys `./.web` and rebuilds the index without adding a note — use it to
   pick up a tool update (or repair `.web`) in a repo you're only reading.
 - `--rename OLD NEW` moves or renames a note: NEW ending in `.md` is the exact target;
   otherwise NEW is a destination folder and the file keeps its name. The note's
   frontmatter title (and, on a filename change, its date) follows the new location;
   an existing target is never overwritten.
-- Tab-completion drills through the path (directories under the current repo) and the
-  flags, and completes note files after `--delete`; enabled automatically via
-  `functions/add-notes-completion.bash`. Requires `python3` and `git`.
+- Tab-completion drills through the path after `--add` (directories under the current
+  repo) and the flags, and completes note files after `--delete`; enabled automatically
+  via `functions/meeting-notes-completion.bash`. Requires `python3` and `git`.
 
 ## ⚙️ 6. Aliases, Environment & Functions
 
@@ -208,7 +212,7 @@ add-notes --rebuild                                    # refresh ./.web + index,
 | `environment/git-prompt.bash` | environment | Two-line, Git-aware Catppuccin Macchiato prompt |
 | `environment/wsl-terminal.bash` | environment | WSL: tab title follows `cd`; Windows Terminal duplicates tabs/panes in the same directory |
 | `functions/git-navigation.bash` | function | `goto-git-root` -- cd to the current repo root |
-| `functions/add-notes-completion.bash` | function | Tab-completion for the `add-notes` command (cwd-aware) |
+| `functions/meeting-notes-completion.bash` | function | Tab-completion for the `meeting-notes` command (cwd-aware) |
 
 ## 📝 7. Adding New Content
 
@@ -260,3 +264,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-07-24 | Add `environment/wsl-terminal.bash` (WSL tab title + Windows Terminal same-directory tab duplication); remove root `title.sh` prototype |
 | 2026-07-24 | `setup.sh`: print post-setup hints from sibling `<filename>.hint` Markdown files; add `environment/wsl-terminal.bash.hint` (Windows Terminal settings for title + same-dir duplication) |
 | 2026-07-24 | Add `git-list-merged-branches` tool: read-only report of local/remote branches safe to delete (merged by ancestry or squash-merged via `git cherry`; flags branches with new commits after a squash merge as not safe; each entry shows the branch author, merge target, merging commit, and date) |
+| 2026-07-28 | Rename `add-notes` to `meeting-notes` (also `tools/add-notes/` → `tools/meeting-notes/`, `add-notes-completion.bash` → `meeting-notes-completion.bash`); adding a note now requires `--add PATH` and there are no positional arguments, so a missing mode flag prints the help with an error and exits `1`; `ADD_NOTES_*` env overrides renamed to `MEETING_NOTES_*` (no fallback) |
