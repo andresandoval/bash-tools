@@ -10,10 +10,83 @@
 #
 # All of them work in both worktree layouts: a normal clone with linked worktrees
 # added alongside it, and a bare repository whose worktrees are siblings of it.
+# Each one takes -h / --help.
 
 # ---------------------------------------------------------------------------
 # Internals — prefixed `_git_nav_`, not meant to be called directly.
 # ---------------------------------------------------------------------------
+
+# Print usage for one of the commands below, named by $1. Help was asked for, so it
+# goes to stdout. Every block ends with the sibling commands: these three are mostly
+# discoverable through each other.
+_git_nav_help() {
+    case "$1" in
+        goto-git-root)
+            cat <<'EOF'
+Usage:
+  goto-git-root [-h|--help]
+
+Description:
+  cd to the root of the Git working tree you are in. Inside a linked worktree
+  that is the worktree's own root, not the main repository's, and the worktree
+  name and branch are printed so you can tell which one you landed in.
+
+  Where there is no working tree to enter (a bare repository, or a .git
+  directory), it points you at goto-git-main / goto-git-worktree instead.
+EOF
+            ;;
+        goto-git-main)
+            cat <<'EOF'
+Usage:
+  goto-git-main [-h|--help]
+
+Description:
+  cd to the main repository root from anywhere in the repository, including from
+  inside a linked worktree.
+
+  When the main repository is bare, cd there anyway — it is the repository
+  itself, where "git fetch" and "git worktree add" belong — and say so, since
+  there are no files to look at.
+EOF
+            ;;
+        goto-git-worktree)
+            cat <<'EOF'
+Usage:
+  goto-git-worktree [NAME]
+  goto-git-worktree [-h|--help]
+
+Description:
+  cd to a worktree of the current repository.
+
+  With NAME, it is matched against the worktree directory names and the branch
+  names — all exact matches first, and only if there are none, substring
+  matches. One match moves you there; several narrow the menu below to those
+  candidates; none is an error. NAME is tab-completed.
+
+  With no NAME, a numbered menu lists every worktree with its branch, a
+  "(bare)" or "(detached)" marker where that applies, and "(current)" on the
+  one you are in. Press Enter to cancel without moving.
+EOF
+            ;;
+    esac
+
+    printf '\nSee also:\n'
+    if [ "$1" != "goto-git-root" ]; then
+        printf '  goto-git-root       cd to the root of the working tree you are in\n'
+    fi
+    if [ "$1" != "goto-git-main" ]; then
+        printf '  goto-git-main       cd to the main repository root, from any worktree\n'
+    fi
+    if [ "$1" != "goto-git-worktree" ]; then
+        printf '  goto-git-worktree   cd to any worktree, by name or from a menu\n'
+    fi
+}
+
+# Complain about arguments a command does not take, and point at its help.
+_git_nav_bad_args() {
+    printf 'Error: %s\n' "$2" >&2
+    printf 'Run %s --help for usage.\n' "$1" >&2
+}
 
 # Resolve a (possibly relative) directory path to an absolute one. Git prints some
 # paths relative to the cwd, and `realpath` is not available everywhere.
@@ -127,6 +200,19 @@ _git_nav_select() {
 goto-git-root() {
     local git_root branch
 
+    if [ "$#" -gt 0 ]; then
+        case "$1" in
+            -h | --help)
+                _git_nav_help goto-git-root
+                return 0
+                ;;
+            *)
+                _git_nav_bad_args goto-git-root "goto-git-root takes no arguments (got: $1)"
+                return 1
+                ;;
+        esac
+    fi
+
     git_root="$(git rev-parse --show-toplevel 2>/dev/null)" || git_root=""
 
     if [ -z "$git_root" ]; then
@@ -155,6 +241,19 @@ goto-git-root() {
 goto-git-main() {
     local record path label marker
 
+    if [ "$#" -gt 0 ]; then
+        case "$1" in
+            -h | --help)
+                _git_nav_help goto-git-main
+                return 0
+                ;;
+            *)
+                _git_nav_bad_args goto-git-main "goto-git-main takes no arguments (got: $1)"
+                return 1
+                ;;
+        esac
+    fi
+
     record="$(_git_nav_worktrees | head -n 1)"
     if [ -z "$record" ]; then
         echo "Error: not inside a Git repository." >&2
@@ -177,8 +276,25 @@ goto-git-main() {
 # worktree directory names and branch names (exact first, then substring); without
 # one, offers a numbered menu.
 goto-git-worktree() {
-    local name="${1:-}" record path label marker target status
+    local name record path label marker target status
     local -a records=() matches=()
+
+    case "${1:-}" in
+        -h | --help)
+            _git_nav_help goto-git-worktree
+            return 0
+            ;;
+        -*)
+            _git_nav_bad_args goto-git-worktree "unknown option: $1"
+            return 1
+            ;;
+    esac
+    if [ "$#" -gt 1 ]; then
+        _git_nav_bad_args goto-git-worktree "goto-git-worktree takes at most one NAME (got $# arguments)"
+        return 1
+    fi
+
+    name="${1:-}"
 
     while IFS= read -r record; do
         records+=("$record")
@@ -257,6 +373,11 @@ _goto_git_worktree_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     COMPREPLY=()
 
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "--help" -- "$cur"))
+        return 0
+    fi
+
     while IFS= read -r record; do
         IFS=$'\t' read -r path label marker <<<"$record"
         candidates="$candidates ${path##*/}"
@@ -271,3 +392,6 @@ _goto_git_worktree_complete() {
 }
 
 complete -F _goto_git_worktree_complete goto-git-worktree
+
+# The other two take nothing but --help.
+complete -W "--help" goto-git-root goto-git-main

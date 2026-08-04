@@ -97,13 +97,26 @@ belong — so landing there is correct; the note just prevents wondering where t
 
 Bare entries stay selectable in the menu (marked `(bare)`) — same destination as `goto-git-main`.
 
+### `--help`
+
+Each command takes `-h` / `--help` and prints `Usage:` / `Description:` / `See also:` to
+stdout, matching the section style of the `tools/` help blocks. A shared `_git_nav_help`
+holds all three texts in one `case` so they stay in sync, and the `See also:` block lists the
+*other* two commands — these functions are mostly discoverable through each other, which is the
+whole reason the gap went unnoticed for so long.
+
+Each command also rejects what it does not take (`goto-git-root`/`goto-git-main`: any argument;
+`goto-git-worktree`: unknown options and a second NAME) with a `return 1` and a pointer to
+`--help`, rather than silently ignoring it. `--help` works outside a repository.
+
 ### Tab-completion
 
 `_goto_git_worktree_complete` completes worktree directory basenames plus branch names, and
 lives **in the same file** rather than a separate `*-completion.bash`: the functions and their
 completion are one selectable unit, so enabling the file gets everything. (`meeting-notes`
 needs its own file only because the command itself lives in `tools/`.) Outside a repository it
-offers nothing and does not error.
+offers nothing and does not error. A leading `-` completes to `--help`; `goto-git-root` and
+`goto-git-main` get a one-line `complete -W "--help"`, which is all they accept.
 
 ## Non-changes
 
@@ -114,9 +127,11 @@ offers nothing and does not error.
 
 ## Verification
 
-`bash -n` on the file, plus a 24-check behavior suite over scratch fixtures (a normal clone
+`bash -n` on the file, plus a 56-check behavior suite over scratch fixtures (a normal clone
 with a linked worktree, a bare clone with a sibling worktree, and a single-worktree repo)
 covering: silence in the main worktree, the linked-worktree note, `goto-git-main` from both
 layouts, exact/substring/branch matching, the menu (layout, pick, cancel, bad input — none of
 which move you), the no-match error, the bare-repo messages, the single-worktree note, all
-three functions outside a repository, and completion inside and outside a repo.
+three functions outside a repository, `-h`/`--help` for each command (on stdout, not stderr;
+never listing itself under `See also`; working outside a repo; not moving you), every rejected
+argument form, and completion inside a repo, outside one, and for `--help`.
