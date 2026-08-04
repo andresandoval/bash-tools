@@ -211,7 +211,7 @@ meeting-notes --rebuild                                          # refresh ./.we
 | `environment/golang-env.bash` | environment | Go env (`GOPATH`, `GOROOT`) and PATH |
 | `environment/git-prompt.bash` | environment | Two-line, Git-aware Catppuccin Macchiato prompt |
 | `environment/wsl-terminal.bash` | environment | WSL: tab title follows `cd`; Windows Terminal duplicates tabs/panes in the same directory |
-| `functions/git-navigation.bash` | function | `goto-git-root` -- cd to the current repo root |
+| `functions/git-navigation.bash` | functions | `goto-git-root` -- cd to the current working tree's root; `goto-git-main` -- cd to the main repository root from any worktree; `goto-git-worktree [NAME]` -- cd to any worktree by directory/branch name or from a numbered menu (tab-completed) |
 | `functions/meeting-notes-completion.bash` | function | Tab-completion for the `meeting-notes` command (cwd-aware) |
 
 ## 📝 7. Adding New Content
@@ -265,3 +265,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-07-24 | `setup.sh`: print post-setup hints from sibling `<filename>.hint` Markdown files; add `environment/wsl-terminal.bash.hint` (Windows Terminal settings for title + same-dir duplication) |
 | 2026-07-24 | Add `git-list-merged-branches` tool: read-only report of local/remote branches safe to delete (merged by ancestry or squash-merged via `git cherry`; flags branches with new commits after a squash merge as not safe; each entry shows the branch author, merge target, merging commit, and date) |
 | 2026-07-28 | Rename `add-notes` to `meeting-notes` (also `tools/add-notes/` → `tools/meeting-notes/`, `add-notes-completion.bash` → `meeting-notes-completion.bash`); adding a note now requires `--add PATH` and there are no positional arguments, so a missing mode flag prints the help with an error and exits `1`; `ADD_NOTES_*` env overrides renamed to `MEETING_NOTES_*` (no fallback) |
+| 2026-08-04 | `git-navigation.bash`: add `goto-git-main` (main repository root from anywhere in the repo) and `goto-git-worktree [NAME]` (jump to a worktree by directory/branch name — exact then substring — or from a numbered menu, with tab-completion); `goto-git-root` keeps its behavior but now names the worktree and branch when you land in a linked one, and points at the new functions where there is no working tree. Both layouts supported: normal clone with linked worktrees, and bare repo with sibling worktrees |

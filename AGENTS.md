@@ -129,7 +129,7 @@ When creating Git commits, follow these rules:
 | `environment/git-prompt.bash` | sourced | two-line Catppuccin git-aware prompt |
 | `environment/wsl-terminal.bash` | sourced | WSL: dynamic tab title + Windows Terminal same-dir tab/pane duplication |
 | `environment/wsl-terminal.bash.hint` | hint (not selectable) | Windows Terminal settings printed by `setup.sh` after runs with `wsl-terminal.bash` enabled |
-| `functions/git-navigation.bash` | sourced | `goto-git-root` function |
+| `functions/git-navigation.bash` | sourced | worktree-aware navigation: `goto-git-root`, `goto-git-main`, `goto-git-worktree` (+ its completion) |
 | `functions/meeting-notes-completion.bash` | sourced | tab-completion for the `meeting-notes` command |
 | `tools/age-pdf.sh` | command `age-pdf` | age a PDF to look like an old scan |
 | `tools/appimage-install.sh` | command `appimage-install` | install an AppImage as a desktop app |
