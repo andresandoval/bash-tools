@@ -33,8 +33,8 @@ from the managed `~/.local/bin/bash-tools/.bashrc`.
 ## Command interface
 
 ```
-meeting-notes --add PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
-meeting-notes --delete PATH [--no-push]
+meeting-notes --add PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push] [--no-preview]
+meeting-notes --delete PATH [--no-push] [--no-preview]
 meeting-notes --rename OLD NEW [--no-push]
 meeting-notes --rebuild [--no-push]
 ```
@@ -75,11 +75,16 @@ argument parsing with no mode set prints `a mode flag is required (--add, --dele
   changes confined to `.web/` are tolerated — that is the repair case, and rebuild
   overwrites them anyway; dirt anywhere else still aborts.
 - The four modes are mutually exclusive and may each be given only once;
-  `--rebuild`/`--delete`/`--rename` reject the source flags and `--title`.
-  `--no-push` applies to all modes.
+  `--rebuild`/`--delete`/`--rename` reject the source flags and `--title`;
+  `--rebuild`/`--rename` also reject `--no-preview`. `--no-push` applies to all modes.
 - `--no-push` (or `MEETING_NOTES_NO_PUSH=1`) commits without pushing. `--version`, `-h/--help`.
+- `--no-preview` (or `MEETING_NOTES_NO_PREVIEW=1`) suppresses the content preview in
+  the two modes that show one (`--add`, `--delete`). The env var never trips the
+  mode check — only the explicit flag does, so exporting it does not break
+  `--rebuild`/`--rename`.
 - Env overrides for non-interactive runs: `MEETING_NOTES_INIT=yes|no`,
-  `MEETING_NOTES_ON_EXISTING=override|append|cancel`, `MEETING_NOTES_DELETE=yes|no`.
+  `MEETING_NOTES_ON_EXISTING=override|append|cancel`, `MEETING_NOTES_DELETE=yes|no`,
+  `MEETING_NOTES_NO_PREVIEW=1`.
 
 ## Runtime behavior
 
@@ -94,9 +99,11 @@ argument parsing with no mode set prints `a mode flag is required (--add, --dele
 6. Cleans (`clean_md.py`), writes note with frontmatter, prompts on same-file collision
    (override/append/cancel), rebuilds `.web/notes-data.js`, commits, and pushes only if
    a remote/upstream exists (`commit_and_push`, shared by all four modes).
+7. Prints a content preview last, after the commit/push output (see *Content preview*).
 
-Delete mode runs the same preconditions (repo root, clean tree, identity), then
-confirms, removes the file, prunes now-empty parent dirs, reindexes, and commits.
+Delete mode runs the same preconditions (repo root, clean tree, identity), then previews
+the note, confirms, removes the file, prunes now-empty parent dirs, reindexes, and
+commits.
 Rename mode runs the preconditions, moves the file (creating target dirs, pruning
 emptied source dirs), refreshes frontmatter (`refront.py`), reindexes, and commits.
 Rebuild mode runs the preconditions, force-deploys `.web/`, reindexes, and commits.
@@ -104,6 +111,43 @@ Rebuild mode runs the preconditions, force-deploys `.web/`, reindexes, and commi
 Clipboard is cross-platform: WSL/Windows `powershell.exe Get-Clipboard` (forced UTF-8
 output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
 `Get-Clipboard -TextFormatType Html` / `wl-paste -t text/html` / `xclip -t text/html`.
+
+## Content preview
+
+`--add` prints an excerpt of the note after the commit/push output; `--delete` prints one
+before the confirmation prompt. Two helpers in the entry script do the work:
+
+- `strip_frontmatter` — drops the leading `---`…`---` block. A `---` *inside* the body
+  (a horizontal rule) survives: the flag clears at the closing delimiter, so later
+  matches fall through to `print`.
+- `preview_body LABEL` — renders the excerpt from stdin, `LABEL` supplying the leading
+  verb (`Added` / `About to delete`). One `awk` pass; no new dependency.
+
+Shape: a `LABEL N lines, M words:` header, then `PREVIEW_HEAD` (5) lines, a
+`⋮ K more lines` marker, then `PREVIEW_TAIL` (3) lines. Blank lines are skipped
+entirely — counting them would crowd out real content in a short excerpt — so all three
+counts are of non-blank lines and `head + K + tail == N` always reconciles. At or below
+`HEAD + TAIL` lines the whole body prints with no marker. Long lines are clipped to the
+terminal width (`tput cols`, minus 4) or 100 when stdout is not a TTY, with a trailing
+`…`. Empty or whitespace-only input prints nothing at all.
+
+Sources, chosen so the preview always reflects what actually landed on disk:
+
+| Case | Previewed |
+|------|-----------|
+| new note / override | `cleaned_with_fm` piped through `strip_frontmatter` |
+| append | `APPENDED_BODY` — only the new section |
+| delete | the target file piped through `strip_frontmatter` |
+
+The new-note case strips frontmatter from the already-computed `cleaned_with_fm` rather
+than re-running `clean_md.py`: one less `python3` invocation, and byte-identical to the
+file by construction (`clean_md.py` emits `frontmatter(...)` followed by the same
+`clean_body(...)` in both cases).
+
+`append_section` keeps its body in the global `APPENDED_BODY` (not a `local`) purely so
+this preview can show only the appended section. The generated `## Added HH:MM` heading
+is *not* previewed — it is metadata the tool wrote, not content the user supplied, so it
+is excluded for the same reason frontmatter is.
 
 ## Design decisions on record
 
@@ -123,6 +167,15 @@ output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
   the pre-slug folder-path text on every existing note (and the index ignores it), so
   reusing it would have made old notes display their folder path as a title. A new key
   means zero migration; titles never affect sort order.
+- **A content preview beats a browser round-trip** — a failed `Ctrl+X`/`Ctrl+C` used to
+  commit the *previous* clipboard silently, and the only way to catch it was to serve
+  `./.web` (e.g. `lite-server`) and find the entry in a browser. A head+tail excerpt in
+  the terminal answers the same question, so that loop is gone. `--delete` shows one too:
+  "am I removing the right note?" is the same question, and the prompt previously offered
+  nothing but a path. It is skipped when `MEETING_NOTES_DELETE` preapproves the prompt —
+  with no question being asked, a preview informs nothing. `--rename` (content unchanged)
+  and `--rebuild` (no note involved) show nothing, and reject `--no-preview` as
+  meaningless.
 - **Flags, not subcommands** (`--add`, `--rebuild`, `--delete`, `--rename`) — keeps
   `PATH` fully freeform with no reserved words.
 - **Every mode is an explicit flag, including `--add`** — the tool was originally
@@ -158,7 +211,15 @@ output), macOS `pbpaste`, Linux `wl-paste`/`xclip`/`xsel`. HTML flavor uses
 tmp=$(mktemp -d); cd "$tmp"
 printf '# T\n\n- a\n- b\n' > /tmp/raw.md
 MEETING_NOTES_INIT=yes meeting-notes --add demo/team/standup --from /tmp/raw.md --no-push
+# the preview after "Committed." should show the note's first/last lines
 # open ./.web/index.html in a browser to see the tree UI
+```
+
+The `--delete` preview needs a real TTY (it reads the prompt from `/dev/tty`), so pipe
+into a pty rather than into the command:
+
+```bash
+printf 'n\n' | script -qec "meeting-notes --delete demo/team/standup/<date>.md" /dev/null
 ```
 
 Headless render check (WSL): point Windows Chrome at `.web/index.html` via

@@ -68,6 +68,9 @@ Options for --add:
 
 Other options:
   --no-push          Commit but do not push (also via MEETING_NOTES_NO_PUSH=1).
+  --no-preview       Skip the content preview (--add prints it after the commit;
+                     --delete prints it before the confirmation prompt). Also via
+                     MEETING_NOTES_NO_PREVIEW=1.
   --version          Print the tool version and exit.
   -h, --help         Show this help.
 
@@ -251,9 +254,60 @@ commit_and_push() {
 	fi
 }
 
+# --- Content preview --------------------------------------------------------
+# Answers "did the right content land?" in the terminal, so a note no longer has
+# to be checked by serving ./.web and opening a browser (the usual way a failed
+# clipboard copy — pasting the *previous* clipboard — was caught).
+
+# Drop the leading YAML frontmatter block, leaving the note body. A "---" inside
+# the body (a horizontal rule) is preserved: the flag clears at the closing
+# delimiter, so later matches fall through to print.
+strip_frontmatter() {
+	awk 'NR==1 && $0=="---" { fm=1; next }
+	     fm && $0=="---"    { fm=0; next }
+	     fm                 { next }
+	     { print }'
+}
+
+PREVIEW_HEAD=5
+PREVIEW_TAIL=3
+
+# preview_body LABEL — render a note body from stdin as a compact head+tail
+# excerpt. LABEL supplies the leading verb ("Added" / "About to delete").
+preview_body() {
+	local label="$1" width=100 cols
+	if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
+		cols="$(tput cols 2>/dev/null || echo 0)"
+		[ "$cols" -gt 20 ] 2>/dev/null && width=$((cols - 4))
+	fi
+	awk -v head="$PREVIEW_HEAD" -v tail="$PREVIEW_TAIL" -v width="$width" -v label="$label" '
+		function clip(s) { return (length(s) > width) ? substr(s, 1, width - 1) "\342\200\246" : s }
+		# Blank lines carry no content worth previewing, so they are skipped
+		# entirely — counting them would crowd out real lines.
+		/[^[:space:]]/ { lines[++n] = $0; words += NF }
+		END {
+			if (n == 0) exit 0
+			printf "\n%s %d line%s, %d word%s:\n", label, n, (n==1?"":"s"), words, (words==1?"":"s")
+			# head + omitted + tail always sums to n, so the counts reconcile.
+			t = (n > head + tail) ? tail : 0
+			h = t ? head : n
+			for (i = 1; i <= h; i++) print "  " clip(lines[i])
+			if (t) {
+				om = n - head - tail
+				printf "  \342\213\256 %d more line%s\n", om, (om==1?"":"s")
+				for (i = n - tail + 1; i <= n; i++) print "  " clip(lines[i])
+			}
+		}'
+}
+
 # --- Parse arguments --------------------------------------------------------
 NO_PUSH=0
 [ -n "${MEETING_NOTES_NO_PUSH:-}" ] && NO_PUSH=1
+NO_PREVIEW=0
+[ -n "${MEETING_NOTES_NO_PREVIEW:-}" ] && NO_PREVIEW=1
+# Tracked separately from NO_PREVIEW so the mode validation below fires only on
+# the explicit flag — an exported env var must not make --rebuild/--rename fail.
+NO_PREVIEW_FLAG=""
 MODE="" # "" (none yet) | add | delete | rename | rebuild
 DEST_PATH=""
 DELETE_PATH=""
@@ -284,6 +338,10 @@ while [ "$#" -gt 0 ]; do
 		exit 0
 		;;
 	--no-push) NO_PUSH=1 ;;
+	--no-preview)
+		NO_PREVIEW=1
+		NO_PREVIEW_FLAG=1
+		;;
 	--from-clipboard)
 		[ "$SOURCE_MODE" = "file" ] && conflict
 		SOURCE_MODE="clipboard"
@@ -392,14 +450,19 @@ if [ -z "$MODE" ]; then
 fi
 
 # --- Validate flag/mode combinations -----------------------------------------
+extra=()
 if [ "$MODE" != "add" ]; then
-	extra=()
 	[ -n "$SOURCE_MODE" ] && extra+=("--from/--from-clipboard")
 	[ -n "$ENTRY_TITLE" ] && extra+=("--title")
-	if [ "${#extra[@]}" -gt 0 ]; then
-		echo "Error: --$MODE does not accept: ${extra[*]}" >&2
-		exit 1
-	fi
+fi
+# --no-preview is meaningful in the two modes that show content.
+case "$MODE" in
+add | delete) ;;
+*) [ -n "$NO_PREVIEW_FLAG" ] && extra+=("--no-preview") ;;
+esac
+if [ "${#extra[@]}" -gt 0 ]; then
+	echo "Error: --$MODE does not accept: ${extra[*]}" >&2
+	exit 1
 fi
 
 # --- Rebuild mode: refresh .web + index, no note involved --------------------
@@ -470,6 +533,14 @@ if [ "$MODE" = "delete" ]; then
 			echo "Error: note not found: $DELETE_PATH" >&2
 			exit 1
 		fi
+	fi
+
+	# Show what is about to go, so the prompt can be answered on content rather
+	# than on a path alone. Skipped when the env var preapproves it: with no
+	# question being asked, a preview informs nothing.
+	if [ "$NO_PREVIEW" -eq 0 ] && [ -z "${MEETING_NOTES_DELETE:-}" ]; then
+		strip_frontmatter <"$TARGET" | preview_body "About to delete"
+		echo
 	fi
 
 	ans="${MEETING_NOTES_DELETE:-}"
@@ -722,9 +793,10 @@ mkdir -p "$DIR"
 
 write_new() { printf '%s\n' "$cleaned_with_fm" >"$FILE"; }
 append_section() {
-	local body
-	body="$(printf '%s' "$content" | python3 "$LIB/clean_md.py")"
-	printf '\n\n## Added %s\n\n%s\n' "$TIME${ENTRY_TITLE:+ — $ENTRY_TITLE}" "$body" >>"$FILE"
+	# Global, not local: the preview at the end shows only this new section
+	# rather than the whole grown file.
+	APPENDED_BODY="$(printf '%s' "$content" | python3 "$LIB/clean_md.py")"
+	printf '\n\n## Added %s\n\n%s\n' "$TIME${ENTRY_TITLE:+ — $ENTRY_TITLE}" "$APPENDED_BODY" >>"$FILE"
 }
 
 if [ -f "$FILE" ]; then
@@ -752,3 +824,14 @@ python3 "$LIB/build_index.py" "$NOTES_ROOT"
 
 # --- Commit & push ----------------------------------------------------------
 commit_and_push "Add notes: $TITLE ($DATE_FIELD)"
+
+# --- Preview what landed ----------------------------------------------------
+# Previewing cleaned_with_fm minus its frontmatter (rather than re-running
+# clean_md.py) guarantees this is exactly what was written to the file.
+if [ "$NO_PREVIEW" -eq 0 ]; then
+	if [ -n "${APPENDED_BODY:-}" ]; then
+		printf '%s\n' "$APPENDED_BODY" | preview_body "Added"
+	else
+		printf '%s\n' "$cleaned_with_fm" | strip_frontmatter | preview_body "Added"
+	fi
+fi

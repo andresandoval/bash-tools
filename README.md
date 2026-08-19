@@ -197,6 +197,30 @@ meeting-notes --rebuild                                          # refresh ./.we
   otherwise NEW is a destination folder and the file keeps its name. The note's
   frontmatter title (and, on a filename change, its date) follows the new location;
   an existing target is never overwritten.
+- After a successful `--add` the tool prints a short excerpt of what it just stored, so
+  you can confirm the right clipboard content landed without serving `./.web` and
+  checking in a browser. `--delete` prints the same excerpt *before* its confirmation
+  prompt, so you can see what you are about to remove:
+
+  ```
+  Committed.
+  Pushed.
+
+  Added 36 lines, 205 words:
+    # Weekly Team Sync
+    ## Attendees
+    - Andres, Maria, Jorge
+    ## Decisions
+    - Ship the meeting-notes rename this week
+    ⋮ 28 more lines
+    - Follow up with QA on the regression suite
+    ## Next steps
+    - Andres to update the changelog
+  ```
+
+  Blank lines are skipped and long lines are clipped to your terminal width. Suppress it
+  with `--no-preview` (or `MEETING_NOTES_NO_PREVIEW=1`); `--rename` and `--rebuild` never
+  print one.
 - Tab-completion drills through the path after `--add` (directories under the current
   repo) and the flags, and completes note files after `--delete`; enabled automatically
   via `functions/meeting-notes-completion.bash`. Requires `python3` and `git`.
@@ -267,3 +291,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-07-28 | Rename `add-notes` to `meeting-notes` (also `tools/add-notes/` → `tools/meeting-notes/`, `add-notes-completion.bash` → `meeting-notes-completion.bash`); adding a note now requires `--add PATH` and there are no positional arguments, so a missing mode flag prints the help with an error and exits `1`; `ADD_NOTES_*` env overrides renamed to `MEETING_NOTES_*` (no fallback) |
 | 2026-08-04 | `git-navigation.bash`: add `goto-git-main` (main repository root from anywhere in the repo) and `goto-git-worktree [NAME]` (jump to a worktree by directory/branch name — exact then substring — or from a numbered menu, with tab-completion); `goto-git-root` keeps its behavior but now names the worktree and branch when you land in a linked one, and points at the new functions where there is no working tree. Both layouts supported: normal clone with linked worktrees, and bare repo with sibling worktrees |
 | 2026-08-04 | `git-navigation.bash`: all three functions take `-h` / `--help` (usage, description, and the sibling commands), reject arguments they do not accept, and complete `--help` |
+| 2026-08-19 | `meeting-notes`: print a content preview (head+tail excerpt with line/word counts) after `--add` commits and before the `--delete` confirmation prompt, so a mis-copied clipboard is caught without serving `./.web` in a browser; suppress with `--no-preview` / `MEETING_NOTES_NO_PREVIEW=1` |
