@@ -5,10 +5,9 @@
 # notes repository: it is git-initialized on demand and gets a self-contained
 # `.web/` search UI deployed into it.
 #
-# Every invocation needs one mode flag: --add, --delete, --rename, --retitle, or
-# --rebuild.
+# Every invocation names one command: add, delete, rename, retitle, or rebuild.
 #
-# You choose the structure: --add takes a freeform, multi-level path (e.g.
+# You choose the structure: `add` takes a freeform, multi-level path (e.g.
 # project/team/standup). Notes are saved to <PATH>/<date>.md, or to an exact file
 # when PATH ends in .md (e.g. project/standup/recap-26-02-12.md, for past meetings).
 # Formatted (HTML) clipboard content is converted to Markdown automatically.
@@ -25,60 +24,27 @@ TOOL_REPO="$(dirname "$TOOLS_DIR")"       # bash-tools repo root (for versioning
 
 NOTES_ROOT="$(pwd)"
 
-usage() {
+usage_overview() {
 	cat <<'EOF'
-Usage: meeting-notes --add PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
-       meeting-notes --delete PATH [--no-push]
-       meeting-notes --rename OLD NEW [--no-push]
-       meeting-notes --retitle PATH TEXT [--no-push]
-       meeting-notes --rebuild [--no-push]
+Usage: meeting-notes <command> [arguments] [options]
 
 Store meeting notes as clean Markdown inside the current directory's notes
 repository, then commit (and push if a remote is configured).
 
-Exactly one mode flag is required: --add, --delete, --rename, --retitle, or
---rebuild.
+Commands:
+  add PATH           Add a note at PATH, a destination path describing your own
+                     (multi-level) structure.
+  delete PATH        Delete the note file at PATH.
+  rename OLD NEW     Move/rename the note at OLD.
+  retitle PATH TEXT  Change the entry title of the note at PATH.
+  rebuild            Redeploy ./.web and rebuild the search index.
 
-Modes:
-  --add PATH         Add a note at PATH, a destination path describing your own
-                     (multi-level) structure:
-                       project/team/standup       -> project/team/standup/<date>.md
-                       project/standup/recap.md    a .md ending sets the exact
-                                                    filename, handy for backfilling
-                                                    past meetings
-                     Each folder segment is slugified (lowercase, hyphenated); the
-                     original text is kept in the note's frontmatter title.
-  --delete PATH      Delete the note file at PATH, rebuild the web index, and
-                     commit. Asks for confirmation first (skip the prompt with
-                     MEETING_NOTES_DELETE=yes|no).
-  --rename OLD NEW   Move/rename the note at OLD. NEW ending in .md is the exact
-                     target file; otherwise NEW is a destination folder and the
-                     file keeps its name. The note's frontmatter title (and, when
-                     the filename changes, its date) follows the new location.
-                     Refuses to overwrite an existing note.
-  --retitle PATH TEXT
-                     Set the entry title of the note at PATH to TEXT, without
-                     moving the file. This is the same title --add --title sets:
-                     it is shown next to the date in the web UI and is
-                     searchable. Notes added without a title gain one.
-  --rebuild          Redeploy ./.web from the tool template and rebuild the search
-                     index without adding a note (e.g. after a tool update, or to
-                     repair a modified .web). Commits the result.
+A command is required, and comes first: everything after it belongs to that
+command. Run 'meeting-notes <command> --help' for a command's arguments and
+options.
 
-Options for --add:
-  --title TEXT       Optional human title for the entry. Shown next to the date in
-                     the web UI (e.g. "jul-17-2026 — Kickoff") and searchable.
-                     Without it the entry displays as before (date only).
-  --from FILE        Read the raw notes from FILE.
-  --from-clipboard   Read the raw notes from the clipboard (the default if no
-                     source flag is given). Formatted (HTML) clipboard content is
-                     converted to Markdown automatically; otherwise plain text.
-
-Other options:
+Options (every command):
   --no-push          Commit but do not push (also via MEETING_NOTES_NO_PUSH=1).
-  --no-preview       Skip the content preview (--add prints it after the commit;
-                     --delete prints it before the confirmation prompt). Also via
-                     MEETING_NOTES_NO_PREVIEW=1.
   --version          Print the tool version and exit.
   -h, --help         Show this help.
 
@@ -88,22 +54,116 @@ Behavior:
     are asked to initialize one (skip with MEETING_NOTES_INIT=yes|no); if it already
     is, the working tree must be clean.
   - A self-contained search UI is deployed/refreshed in ./.web (open index.html).
-  - If the target note already exists you are asked to override, append, or cancel
-    (override non-interactively with MEETING_NOTES_ON_EXISTING=override|append|cancel).
-
-Examples:
-  meeting-notes --add garagehub/daily-standup
-  meeting-notes --add garagehub/auth/design-review --from ./notes.md
-  meeting-notes --add garagehub/daily-standup/jun-12-2026.md   # backfill a past note
-  meeting-notes --add garagehub/design-review --title "Auth kickoff"
-  meeting-notes --delete garagehub/daily-standup/jun-12-2026.md
-  meeting-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro
-  meeting-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md
-  meeting-notes --retitle garagehub/retro/jun-12-2026.md "Auth kickoff"
-  meeting-notes --rebuild
 
 Tab completion is installed automatically via bash-tools (functions/).
 EOF
+}
+
+# Help for a single command. Kept separate from the overview so each block stays
+# short enough to read at the prompt; `meeting-notes <command> --help` lands here.
+usage_mode() {
+	case "$1" in
+	add)
+		cat <<'EOF'
+Usage: meeting-notes add PATH [--title TEXT] [--from FILE | --from-clipboard]
+                             [--no-preview] [--no-push]
+
+Add a note at PATH, a destination path describing your own (multi-level)
+structure:
+
+  project/team/standup      -> project/team/standup/<date>.md
+  project/standup/recap.md   a .md ending sets the exact filename, handy for
+                             backfilling past meetings
+
+Each folder segment is slugified (lowercase, hyphenated); the original text is
+kept in the note's frontmatter title.
+
+Options:
+  --title TEXT       Optional human title for the entry. Shown next to the date in
+                     the web UI (e.g. "jul-17-2026 — Kickoff") and searchable.
+                     Without it the entry displays as before (date only).
+  --from FILE        Read the raw notes from FILE.
+  --from-clipboard   Read the raw notes from the clipboard (the default if no
+                     source flag is given). Formatted (HTML) clipboard content is
+                     converted to Markdown automatically; otherwise plain text.
+  --no-preview       Skip the content preview printed after the commit (also via
+                     MEETING_NOTES_NO_PREVIEW=1).
+  --no-push          Commit but do not push (also via MEETING_NOTES_NO_PUSH=1).
+
+If the target note already exists you are asked to override, append, or cancel
+(override non-interactively with MEETING_NOTES_ON_EXISTING=override|append|cancel).
+
+Examples:
+  meeting-notes add garagehub/daily-standup
+  meeting-notes add garagehub/auth/design-review --from ./notes.md
+  meeting-notes add garagehub/daily-standup/jun-12-2026.md   # backfill a past note
+  meeting-notes add garagehub/design-review --title "Auth kickoff"
+EOF
+		;;
+	delete)
+		cat <<'EOF'
+Usage: meeting-notes delete PATH [--no-preview] [--no-push]
+
+Delete the note file at PATH, rebuild the web index, and commit. Asks for
+confirmation first (skip the prompt with MEETING_NOTES_DELETE=yes|no).
+
+Options:
+  --no-preview       Skip the content preview printed before the confirmation
+                     prompt (also via MEETING_NOTES_NO_PREVIEW=1).
+  --no-push          Commit but do not push (also via MEETING_NOTES_NO_PUSH=1).
+
+Examples:
+  meeting-notes delete garagehub/daily-standup/jun-12-2026.md
+EOF
+		;;
+	rename)
+		cat <<'EOF'
+Usage: meeting-notes rename OLD NEW [--no-push]
+
+Move/rename the note at OLD. NEW ending in .md is the exact target file;
+otherwise NEW is a destination folder and the file keeps its name. The note's
+frontmatter title (and, when the filename changes, its date) follows the new
+location. Refuses to overwrite an existing note.
+
+Options:
+  --no-push          Commit but do not push (also via MEETING_NOTES_NO_PUSH=1).
+
+Examples:
+  meeting-notes rename garagehub/daily-standup/jun-12-2026.md garagehub/retro
+  meeting-notes rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md
+EOF
+		;;
+	retitle)
+		cat <<'EOF'
+Usage: meeting-notes retitle PATH TEXT [--no-push]
+
+Set the entry title of the note at PATH to TEXT, without moving the file. This
+is the same title 'add --title' sets: it is shown next to the date in the web UI
+and is searchable. Notes added without a title gain one.
+
+Options:
+  --no-push          Commit but do not push (also via MEETING_NOTES_NO_PUSH=1).
+
+Examples:
+  meeting-notes retitle garagehub/retro/jun-12-2026.md "Auth kickoff"
+EOF
+		;;
+	rebuild)
+		cat <<'EOF'
+Usage: meeting-notes rebuild [--no-push]
+
+Redeploy ./.web from the tool template and rebuild the search index without
+adding a note (e.g. after a tool update, or to repair a modified .web). Commits
+the result.
+
+Options:
+  --no-push          Commit but do not push (also via MEETING_NOTES_NO_PUSH=1).
+
+Examples:
+  meeting-notes rebuild
+EOF
+		;;
+	esac
 }
 
 tool_version() {
@@ -198,7 +258,7 @@ resolve_note_rel() {
 
 # --- Git seeding: ensure the cwd is a clean notes repo at its root ----------
 # Pass "allow-web-dirt" to tolerate uncommitted changes confined to .web/ —
-# --rebuild overwrites and commits those anyway (its repair use case).
+# `rebuild` overwrites and commits those anyway (its repair use case).
 ensure_notes_repo() {
 	local allow_web_dirt="${1:-}"
 	if git -C "$NOTES_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -253,7 +313,7 @@ check_git_identity() {
 
 # --- Deploy/refresh the .web UI from the tool template ----------------------
 # Pass "force" to redeploy even when the recorded tool version matches (used by
-# --rebuild, which must also repair a hand-edited or corrupted .web).
+# `rebuild`, which must also repair a hand-edited or corrupted .web).
 deploy_web_if_stale() {
 	local force="${1:-}" current marker
 	current="$(tool_version)"
@@ -344,8 +404,8 @@ NO_PUSH=0
 [ -n "${MEETING_NOTES_NO_PUSH:-}" ] && NO_PUSH=1
 NO_PREVIEW=0
 [ -n "${MEETING_NOTES_NO_PREVIEW:-}" ] && NO_PREVIEW=1
-# Tracked separately from NO_PREVIEW so the mode validation below fires only on
-# the explicit flag — an exported env var must not make --rebuild/--rename fail.
+# Tracked separately from NO_PREVIEW so the command validation below fires only on
+# the explicit flag — an exported env var must not make rebuild/rename fail.
 NO_PREVIEW_FLAG=""
 MODE="" # "" (none yet) | add | delete | rename | retitle | rebuild
 DEST_PATH=""
@@ -363,15 +423,86 @@ conflict() {
 	exit 1
 }
 
-mode_conflict() {
-	echo "Error: --add, --rebuild, --delete, --rename, and --retitle are mutually exclusive (and may be given only once)." >&2
+# A bad or missing argument for the command we already know: name the command's
+# own usage rather than the whole overview.
+arg_error() {
+	echo "Error: $1" >&2
+	echo >&2
+	usage_mode "$MODE" >&2
 	exit 1
 }
 
+# The five operations are commands, not flags. Reject the flag spelling like any
+# other unknown option, but name the invocation that does work.
+retired_flag() {
+	echo "Error: unknown option: --$1" >&2
+	echo "Use: meeting-notes $2 — run 'meeting-notes --help' to see all commands." >&2
+	exit 1
+}
+
+# --- The command comes first --------------------------------------------------
+# Reading it before anything else is what lets the commands stay bare words: a
+# command's own arguments and options are parsed by the rules of that command,
+# and a free-text value (retitle's TEXT) can start with '-' without ambiguity.
+if [ "$#" -eq 0 ]; then
+	echo "Error: a command is required (add, delete, rename, retitle, or rebuild)." >&2
+	echo >&2
+	usage_overview >&2
+	exit 1
+fi
+
+case "$1" in
+-h | --help)
+	usage_overview
+	exit 0
+	;;
+--version)
+	tool_version
+	exit 0
+	;;
+add | delete | rename | retitle | rebuild)
+	MODE="$1"
+	shift
+	;;
+--add | --add=*) retired_flag add "add PATH" ;;
+--delete | --delete=*) retired_flag delete "delete PATH" ;;
+--rename) retired_flag rename "rename OLD NEW" ;;
+--retitle) retired_flag retitle "retitle PATH TEXT" ;;
+--rebuild) retired_flag rebuild "rebuild" ;;
+-*)
+	echo "Error: unknown option: $1 (a command comes first: add, delete, rename, retitle, rebuild)" >&2
+	exit 1
+	;;
+*)
+	echo "Error: unknown command: $1 (expected add, delete, rename, retitle, or rebuild)" >&2
+	exit 1
+	;;
+esac
+
+# --- The command's arguments and options -------------------------------------
+# One pass: options are recognized wherever they appear, and anything else fills
+# the command's positional slots in order, so `add --no-preview PATH` and
+# `add PATH --no-preview` are the same invocation.
+case "$MODE" in
+add | delete) NEED=1 ;;
+rename | retitle) NEED=2 ;;
+rebuild) NEED=0 ;;
+esac
+POSITIONAL=()
+
 while [ "$#" -gt 0 ]; do
+	# retitle's TEXT is free text and may legitimately start with '-', so the
+	# argument right after its PATH is taken verbatim. That is the documented
+	# order (retitle PATH TEXT [options]); an option placed between the two would
+	# be read as the title.
+	if [ "$MODE" = "retitle" ] && [ "${#POSITIONAL[@]}" -eq 1 ]; then
+		POSITIONAL+=("$1")
+		shift
+		continue
+	fi
 	case "$1" in
 	-h | --help)
-		usage
+		usage_mode "$MODE"
 		exit 0
 		;;
 	--version)
@@ -417,113 +548,86 @@ while [ "$#" -gt 0 ]; do
 			exit 1
 		}
 		;;
-	--add)
-		[ -n "$MODE" ] && mode_conflict
-		shift
-		DEST_PATH="${1:-}"
-		[ -z "$DEST_PATH" ] && {
-			echo "Error: --add requires a PATH argument." >&2
-			exit 1
-		}
-		MODE="add"
-		;;
-	--add=*)
-		[ -n "$MODE" ] && mode_conflict
-		DEST_PATH="${1#--add=}"
-		[ -z "$DEST_PATH" ] && {
-			echo "Error: --add requires a PATH argument." >&2
-			exit 1
-		}
-		MODE="add"
-		;;
-	--delete)
-		[ -n "$MODE" ] && mode_conflict
-		shift
-		DELETE_PATH="${1:-}"
-		[ -z "$DELETE_PATH" ] && {
-			echo "Error: --delete requires a PATH argument." >&2
-			exit 1
-		}
-		MODE="delete"
-		;;
-	--delete=*)
-		[ -n "$MODE" ] && mode_conflict
-		DELETE_PATH="${1#--delete=}"
-		[ -z "$DELETE_PATH" ] && {
-			echo "Error: --delete requires a PATH argument." >&2
-			exit 1
-		}
-		MODE="delete"
-		;;
-	--rename)
-		[ -n "$MODE" ] && mode_conflict
-		RENAME_OLD="${2:-}"
-		RENAME_NEW="${3:-}"
-		if [ -z "$RENAME_OLD" ] || [ -z "$RENAME_NEW" ]; then
-			echo "Error: --rename requires OLD and NEW arguments." >&2
+	add | delete | rename | retitle | rebuild)
+		# Only reachable once this command's own slots are full, so it is a second
+		# command rather than a path that happens to be named like one.
+		if [ "${#POSITIONAL[@]}" -ge "$NEED" ]; then
+			echo "Error: only one command may be given (already running '$MODE')." >&2
 			exit 1
 		fi
-		shift 2
-		MODE="rename"
+		POSITIONAL+=("$1")
 		;;
-	--retitle)
-		[ -n "$MODE" ] && mode_conflict
-		# Two arguments, as --rename, so there is no --retitle= form. TEXT is
-		# read positionally: it is free text and may legitimately start with '-'.
-		if [ "$#" -lt 3 ]; then
-			echo "Error: --retitle requires PATH and TEXT arguments." >&2
-			exit 1
-		fi
-		RETITLE_PATH="$2"
-		RETITLE_TEXT="$3"
-		if [ -z "$RETITLE_PATH" ]; then
-			echo "Error: --retitle requires PATH and TEXT arguments." >&2
-			exit 1
-		fi
-		if [ -z "$RETITLE_TEXT" ]; then
-			echo "Error: --retitle TEXT must not be empty." >&2
-			exit 1
-		fi
-		shift 2
-		MODE="retitle"
-		;;
-	--rebuild)
-		[ -n "$MODE" ] && mode_conflict
-		MODE="rebuild"
-		;;
+	--add | --add=*) retired_flag add "add PATH" ;;
+	--delete | --delete=*) retired_flag delete "delete PATH" ;;
+	--rename) retired_flag rename "rename OLD NEW" ;;
+	--retitle) retired_flag retitle "retitle PATH TEXT" ;;
+	--rebuild) retired_flag rebuild "rebuild" ;;
 	-*)
 		echo "Error: unknown option: $1" >&2
 		exit 1
 		;;
 	*)
-		echo "Error: unexpected argument: $1 (use --add PATH to add a note)" >&2
-		exit 1
+		if [ "${#POSITIONAL[@]}" -ge "$NEED" ]; then
+			echo "Error: unexpected argument: $1" >&2
+			exit 1
+		fi
+		POSITIONAL+=("$1")
 		;;
 	esac
 	shift
 done
 
-# --- A mode flag is mandatory -------------------------------------------------
-if [ -z "$MODE" ]; then
-	echo "Error: a mode flag is required (--add, --delete, --rename, --retitle, or --rebuild)." >&2
-	echo >&2
-	usage >&2
-	exit 1
+# --- Assign the positionals ---------------------------------------------------
+if [ "${#POSITIONAL[@]}" -lt "$NEED" ]; then
+	case "$MODE" in
+	add) arg_error "add requires a PATH argument." ;;
+	delete) arg_error "delete requires a PATH argument." ;;
+	rename) arg_error "rename requires OLD and NEW arguments." ;;
+	retitle) arg_error "retitle requires PATH and TEXT arguments." ;;
+	esac
 fi
 
-# --- Validate flag/mode combinations -----------------------------------------
+case "$MODE" in
+add)
+	DEST_PATH="${POSITIONAL[0]}"
+	if [ -z "$DEST_PATH" ]; then arg_error "add requires a PATH argument."; fi
+	;;
+delete)
+	DELETE_PATH="${POSITIONAL[0]}"
+	if [ -z "$DELETE_PATH" ]; then arg_error "delete requires a PATH argument."; fi
+	;;
+rename)
+	RENAME_OLD="${POSITIONAL[0]}"
+	RENAME_NEW="${POSITIONAL[1]}"
+	if [ -z "$RENAME_OLD" ] || [ -z "$RENAME_NEW" ]; then
+		arg_error "rename requires OLD and NEW arguments."
+	fi
+	;;
+retitle)
+	RETITLE_PATH="${POSITIONAL[0]}"
+	RETITLE_TEXT="${POSITIONAL[1]}"
+	if [ -z "$RETITLE_PATH" ]; then
+		arg_error "retitle requires PATH and TEXT arguments."
+	fi
+	if [ -z "$RETITLE_TEXT" ]; then
+		arg_error "retitle TEXT must not be empty."
+	fi
+	;;
+esac
+
+# --- Validate option/command combinations ------------------------------------
 extra=()
 if [ "$MODE" != "add" ]; then
 	[ -n "$SOURCE_MODE" ] && extra+=("--from/--from-clipboard")
 	[ -n "$ENTRY_TITLE" ] && extra+=("--title")
 fi
-# --no-preview is meaningful in the two modes that show content.
+# --no-preview is meaningful in the two commands that show content.
 case "$MODE" in
 add | delete) ;;
 *) [ -n "$NO_PREVIEW_FLAG" ] && extra+=("--no-preview") ;;
 esac
 if [ "${#extra[@]}" -gt 0 ]; then
-	echo "Error: --$MODE does not accept: ${extra[*]}" >&2
+	echo "Error: $MODE does not accept: ${extra[*]}" >&2
 	exit 1
 fi
 
@@ -562,7 +666,7 @@ if [ "$MODE" = "delete" ]; then
 	case "$DELETE_PATH" in
 	*.md) ;;
 	*)
-		echo "Error: --delete expects a .md note file." >&2
+		echo "Error: delete expects a .md note file." >&2
 		exit 1
 		;;
 	esac
@@ -641,7 +745,7 @@ if [ "$MODE" = "rename" ]; then
 	case "$RENAME_OLD" in
 	*.md) ;;
 	*)
-		echo "Error: --rename OLD must be a .md note file." >&2
+		echo "Error: rename OLD must be a .md note file." >&2
 		exit 1
 		;;
 	esac
@@ -746,7 +850,7 @@ if [ "$MODE" = "retitle" ]; then
 	case "$RETITLE_PATH" in
 	*.md) ;;
 	*)
-		echo "Error: --retitle expects a .md note file." >&2
+		echo "Error: retitle expects a .md note file." >&2
 		exit 1
 		;;
 	esac
@@ -761,7 +865,7 @@ if [ "$MODE" = "retitle" ]; then
 	fi
 	RETITLE_PATH="$resolved"
 
-	python3 "$LIB/refront.py" "$NOTES_ROOT/$RETITLE_PATH" --label "$RETITLE_TEXT"
+	python3 "$LIB/refront.py" "$NOTES_ROOT/$RETITLE_PATH" --label="$RETITLE_TEXT"
 	echo "Retitled $RETITLE_PATH -> $RETITLE_TEXT"
 
 	deploy_web_if_stale
@@ -771,7 +875,7 @@ if [ "$MODE" = "retitle" ]; then
 fi
 
 # --- Add mode ----------------------------------------------------------------
-# DEST_PATH is guaranteed non-empty here: --add rejects a missing value.
+# DEST_PATH is guaranteed non-empty here: `add` rejects a missing value.
 [ -z "$SOURCE_MODE" ] && SOURCE_MODE="clipboard"
 
 # --- Validate and parse the destination path --------------------------------
@@ -848,7 +952,7 @@ else
 		: # plain text (may be empty → caught by the not_blank check below)
 	else
 		echo "Error: no clipboard tool found. Install xclip or wl-clipboard," >&2
-		echo "       or pass a file: meeting-notes --add PATH --from FILE" >&2
+		echo "       or pass a file: meeting-notes add PATH --from FILE" >&2
 		exit 1
 	fi
 fi
@@ -860,7 +964,7 @@ fi
 
 # --- Write (handle collision) -----------------------------------------------
 label_args=()
-[ -n "$ENTRY_TITLE" ] && label_args=(--label "$ENTRY_TITLE")
+[ -n "$ENTRY_TITLE" ] && label_args=(--label="$ENTRY_TITLE")
 cleaned_with_fm="$(printf '%s' "$content" | python3 "$LIB/clean_md.py" \
 	--title "$TITLE" --date "$DATE_FIELD" --created "$CREATED" "${label_args[@]}")"
 

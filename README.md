@@ -152,25 +152,30 @@ Many tools provide a usage block; run them with `--help` where supported.
 ### `meeting-notes` — meeting notes in any directory
 
 Run `meeting-notes` inside any directory to turn it into a notes repository. Every
-invocation needs exactly one **mode flag**; `--add` takes a freeform, multi-level
-**path** describing your own structure:
+invocation starts with one of five **commands** — `add`, `delete`, `rename`, `retitle`,
+`rebuild`. `add` takes a freeform, multi-level **path** describing your own structure:
 
 ```bash
-meeting-notes --add garagehub/daily-standup                      # -> garagehub/daily-standup/<date>.md
-meeting-notes --add garagehub/auth/design-review --from ./raw.md # multi-level, from a file
-meeting-notes --add garagehub/daily-standup                      # from the clipboard (default)
-meeting-notes --add garagehub/daily-standup/jun-12-2026.md       # backfill a past note (exact filename)
-meeting-notes --add garagehub/design-review --title "Kickoff"    # optional entry title, shown in the UI
-meeting-notes --delete garagehub/daily-standup/jun-12-2026.md    # delete a note (+reindex, commit)
-meeting-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro  # move, keep name
-meeting-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md  # exact rename
-meeting-notes --retitle garagehub/retro/jun-12-2026.md "Auth kickoff"  # change the entry title only
-meeting-notes --rebuild                                          # refresh ./.web + index, no note added
+meeting-notes add garagehub/daily-standup                      # -> garagehub/daily-standup/<date>.md
+meeting-notes add garagehub/auth/design-review --from ./raw.md # multi-level, from a file
+meeting-notes add garagehub/daily-standup                      # from the clipboard (default)
+meeting-notes add garagehub/daily-standup/jun-12-2026.md       # backfill a past note (exact filename)
+meeting-notes add garagehub/design-review --title "Kickoff"    # optional entry title, shown in the UI
+meeting-notes delete garagehub/daily-standup/jun-12-2026.md    # delete a note (+reindex, commit)
+meeting-notes rename garagehub/daily-standup/jun-12-2026.md garagehub/retro  # move, keep name
+meeting-notes rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md  # exact rename
+meeting-notes retitle garagehub/retro/jun-12-2026.md "Auth kickoff"  # change the entry title only
+meeting-notes rebuild                                          # refresh ./.web + index, no note added
 ```
 
-- Running it with **no mode flag** (or with a bare path instead of `--add PATH`) prints
-  the help with an error saying a flag is missing, and exits `1`. Only `--help` and
-  `--version` exit `0` without doing work.
+- The command comes **first**; everything after it belongs to that command, so
+  operations (bare words) never look like parameters (`--flags`). Running it with **no
+  command** prints the help with an error and exits `1`; an unrecognized first word is
+  rejected as an unknown command. Only `--help` and `--version` exit `0` without doing
+  work.
+- Help is per command: `meeting-notes --help` lists the commands, and
+  `meeting-notes <command> --help` (e.g. `meeting-notes add --help`) prints that
+  command's arguments, options and examples.
 - The note is saved at `<PATH>/<date>.md`, or at the exact file when `PATH` ends in
   `.md`. Each folder segment is **slugified** (lowercase, hyphenated); the original
   text is kept in the note's frontmatter `title`.
@@ -190,20 +195,20 @@ meeting-notes --rebuild                                          # refresh ./.we
 - `--title TEXT` attaches an optional human title to the entry (frontmatter `label`);
   the UI shows it next to the date (`jul-17-2026 — Kickoff`) and search matches it.
   Untitled entries display as before.
-- `--delete PATH` removes a note (asks for confirmation, `MEETING_NOTES_DELETE=yes|no`
-  to skip), prunes emptied folders, rebuilds the index, and commits. `--rebuild`
+- `delete PATH` removes a note (asks for confirmation, `MEETING_NOTES_DELETE=yes|no`
+  to skip), prunes emptied folders, rebuilds the index, and commits. `rebuild`
   force-redeploys `./.web` and rebuilds the index without adding a note — use it to
   pick up a tool update (or repair `.web`) in a repo you're only reading.
-- `--rename OLD NEW` moves or renames a note: NEW ending in `.md` is the exact target;
+- `rename OLD NEW` moves or renames a note: NEW ending in `.md` is the exact target;
   otherwise NEW is a destination folder and the file keeps its name. The note's
   frontmatter title (and, on a filename change, its date) follows the new location;
   an existing target is never overwritten.
-- `--retitle PATH TEXT` changes just the **entry title** — the same one `--add --title`
+- `retitle PATH TEXT` changes just the **entry title** — the same one `add --title`
   sets — leaving the file where it is. Notes added without a title gain one. Use it when
   the note is in the right place and only its label is wrong.
-- After a successful `--add` the tool prints a short excerpt of what it just stored, so
+- After a successful `add` the tool prints a short excerpt of what it just stored, so
   you can confirm the right clipboard content landed without serving `./.web` and
-  checking in a browser. `--delete` prints the same excerpt *before* its confirmation
+  checking in a browser. `delete` prints the same excerpt *before* its confirmation
   prompt, so you can see what you are about to remove:
 
   ```
@@ -223,10 +228,11 @@ meeting-notes --rebuild                                          # refresh ./.we
   ```
 
   Blank lines are skipped and long lines are clipped to your terminal width. Suppress it
-  with `--no-preview` (or `MEETING_NOTES_NO_PREVIEW=1`); `--rename` and `--rebuild` never
+  with `--no-preview` (or `MEETING_NOTES_NO_PREVIEW=1`); `rename` and `rebuild` never
   print one.
-- Tab-completion drills through the path after `--add` (directories under the current
-  repo) and the flags, and completes note files after `--delete`; enabled automatically
+- Tab-completion knows the commands and what each one takes: the command names in the
+  first position, then directories under the current repo for `add`, note files for
+  `delete`/`rename`/`retitle`, and each command's own options; enabled automatically
   via `functions/meeting-notes-completion.bash`. Requires `python3` and `git`.
 
 ## ⚙️ 6. Aliases, Environment & Functions
@@ -297,3 +303,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-08-04 | `git-navigation.bash`: all three functions take `-h` / `--help` (usage, description, and the sibling commands), reject arguments they do not accept, and complete `--help` |
 | 2026-08-19 | `meeting-notes`: print a content preview (head+tail excerpt with line/word counts) after `--add` commits and before the `--delete` confirmation prompt, so a mis-copied clipboard is caught without serving `./.web` in a browser; suppress with `--no-preview` / `MEETING_NOTES_NO_PREVIEW=1` |
 | 2026-08-21 | `meeting-notes`: add `--retitle PATH TEXT`, a fifth mode that changes only a note's entry title (frontmatter `label`) without moving the file, so retitling no longer needs a `--rename` round-trip; `refront.py` now *inserts* a targeted frontmatter key the note lacks (at `clean_md.py`'s canonical position) instead of skipping it, so notes predating `--title` can be titled; the literal→slugified note lookup shared by `--delete`/`--rename`/`--retitle` is now one `resolve_note_rel` helper |
+| 2026-08-21 | `meeting-notes`: the five operations are now **subcommands** instead of mode flags — `meeting-notes add PATH`, `delete PATH`, `rename OLD NEW`, `retitle PATH TEXT`, `rebuild` — so an operation (a bare word) no longer looks like a parameter (`--flag`). Hard cut-over: the old `--add`/`--delete`/`--rename`/`--retitle`/`--rebuild` forms (and `--add=`/`--delete=`) fail as `unknown option`, naming the invocation that replaces them and pointing at `--help`. Help is per command (`meeting-notes <command> --help`), options may precede or follow a command's positional arguments, and the frontmatter value passed to `refront.py` now uses the `--label=TEXT` form so a title starting with `-` is accepted. Completion dispatches on the command word |
