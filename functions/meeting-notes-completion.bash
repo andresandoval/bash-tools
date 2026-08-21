@@ -21,11 +21,16 @@ _meeting_notes_complete() {
 		return 0
 	fi
 
-	# After --delete or --rename, complete note (.md) files under the cwd,
-	# drilling through directories (skipping the repo's own .git/.web). The
+	# --retitle takes PATH then TEXT; the TEXT position is free text too.
+	if [ "$COMP_CWORD" -ge 2 ] && [ "${COMP_WORDS[COMP_CWORD - 2]}" = "--retitle" ]; then
+		return 0
+	fi
+
+	# After --delete, --rename or --retitle, complete note (.md) files under the
+	# cwd, drilling through directories (skipping the repo's own .git/.web). The
 	# second --rename argument (a destination) falls through to the PATH
 	# completion below, which completes directories.
-	if [ "$prev" = "--delete" ] || [ "$prev" = "--rename" ]; then
+	if [ "$prev" = "--delete" ] || [ "$prev" = "--rename" ] || [ "$prev" = "--retitle" ]; then
 		local f matches=()
 		while IFS= read -r f; do
 			case "$f" in .git | .git/* | .web | .web/*) continue ;; esac
@@ -44,7 +49,7 @@ _meeting_notes_complete() {
 
 	# Flags.
 	if [[ "$cur" == -* ]]; then
-		COMPREPLY=($(compgen -W "--add --title --from --from-clipboard --delete --rename --rebuild --no-push --version --help" -- "$cur"))
+		COMPREPLY=($(compgen -W "--add --title --from --from-clipboard --delete --rename --retitle --rebuild --no-push --version --help" -- "$cur"))
 		return 0
 	fi
 

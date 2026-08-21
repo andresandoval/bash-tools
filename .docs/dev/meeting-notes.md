@@ -19,7 +19,7 @@ tools/meeting-notes/                       # support assets (NOT scanned as a co
   lib/clean_md.py                      #   deterministic Markdown cleanup + frontmatter (stdlib)
   lib/html2md.py                       #   rich-clipboard HTML → Markdown (stdlib html.parser)
   lib/build_index.py                   #   walks notes → writes <repo>/.web/notes-data.js
-  lib/refront.py                       #   in-place frontmatter value rewrite (for --rename)
+  lib/refront.py                       #   in-place frontmatter value rewrite (--rename/--retitle)
   web/                                 #   .web TEMPLATE deployed into each notes repo
     index.html  app.js  styles.css  vendor/marked.min.js
 functions/meeting-notes-completion.bash    # auto-sourced tab-completion (cwd-aware path drill-down)
@@ -36,13 +36,14 @@ from the managed `~/.local/bin/bash-tools/.bashrc`.
 meeting-notes --add PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push] [--no-preview]
 meeting-notes --delete PATH [--no-push] [--no-preview]
 meeting-notes --rename OLD NEW [--no-push]
+meeting-notes --retitle PATH TEXT [--no-push]
 meeting-notes --rebuild [--no-push]
 ```
 
 Exactly one mode flag is required. There are **no positional arguments**: a bare word
 is rejected with `unexpected argument: X (use --add PATH to add a note)`, and finishing
 argument parsing with no mode set prints `a mode flag is required (--add, --delete,
---rename, or --rebuild).` followed by the full help on stderr, exit **1**. Only
+--rename, --retitle, or --rebuild).` followed by the full help on stderr, exit **1**. Only
 `-h/--help` and `--version` exit 0 without doing work.
 
 - `--add PATH` = add a note. `PATH` is your own freeform, multi-level structure
@@ -69,14 +70,24 @@ argument parsing with no mode set prints `a mode flag is required (--add, --dele
   `created`, and unknown keys are preserved byte-for-byte. Then prune emptied
   dirs, reindex, commit (`Rename note: OLD -> NEW`). Takes two arguments, so
   there is no `--rename=` form.
+- `--retitle PATH TEXT` = set one note's entry title (frontmatter `label`, the
+  same key `--add --title` writes) without moving the file. PATH resolves like
+  `--delete`; empty TEXT is rejected. Only `label` is rewritten — `title`, `date`,
+  and `created` still describe the note's unchanged location. `refront.py`
+  *inserts* `label` when the note has none, so notes predating `--title` gain one
+  rather than silently keeping no title. No confirmation prompt (reversible, as
+  `--rename`). Then reindex and commit (`Retitle note: PATH -> TEXT`). Takes two
+  arguments, so there is no `--retitle=` form; TEXT is read positionally because
+  it is free text that may legitimately begin with `-`.
 - `--rebuild` = force-redeploy `.web/` from the tool template (ignores the
   `.tool-version` gate, so it also repairs a modified `.web`), rebuild the index,
   commit (`Rebuild notes web UI (tool version X)`). No note involved. Uncommitted
   changes confined to `.web/` are tolerated — that is the repair case, and rebuild
   overwrites them anyway; dirt anywhere else still aborts.
-- The four modes are mutually exclusive and may each be given only once;
-  `--rebuild`/`--delete`/`--rename` reject the source flags and `--title`;
-  `--rebuild`/`--rename` also reject `--no-preview`. `--no-push` applies to all modes.
+- The five modes are mutually exclusive and may each be given only once;
+  `--rebuild`/`--delete`/`--rename`/`--retitle` reject the source flags and
+  `--title`; `--rebuild`/`--rename`/`--retitle` also reject `--no-preview`.
+  `--no-push` applies to all modes.
 - `--no-push` (or `MEETING_NOTES_NO_PUSH=1`) commits without pushing. `--version`, `-h/--help`.
 - `--no-preview` (or `MEETING_NOTES_NO_PREVIEW=1`) suppresses the content preview in
   the two modes that show one (`--add`, `--delete`). The env var never trips the
@@ -98,7 +109,7 @@ argument parsing with no mode set prints `a mode flag is required (--add, --dele
    `html2md.py`, clipboard2markdown-style) with plain-text fallback.
 6. Cleans (`clean_md.py`), writes note with frontmatter, prompts on same-file collision
    (override/append/cancel), rebuilds `.web/notes-data.js`, commits, and pushes only if
-   a remote/upstream exists (`commit_and_push`, shared by all four modes).
+   a remote/upstream exists (`commit_and_push`, shared by all five modes).
 7. Prints a content preview last, after the commit/push output (see *Content preview*).
 
 Delete mode runs the same preconditions (repo root, clean tree, identity), then previews
@@ -106,6 +117,8 @@ the note, confirms, removes the file, prunes now-empty parent dirs, reindexes, a
 commits.
 Rename mode runs the preconditions, moves the file (creating target dirs, pruning
 emptied source dirs), refreshes frontmatter (`refront.py`), reindexes, and commits.
+Retitle mode runs the preconditions, resolves the note, rewrites `label`
+(`refront.py`), reindexes, and commits — nothing moves and no content changes.
 Rebuild mode runs the preconditions, force-deploys `.web/`, reindexes, and commits.
 
 Clipboard is cross-platform: WSL/Windows `powershell.exe Get-Clipboard` (forced UTF-8
@@ -149,6 +162,15 @@ this preview can show only the appended section. The generated `## Added HH:MM` 
 is *not* previewed — it is metadata the tool wrote, not content the user supplied, so it
 is excluded for the same reason frontmatter is.
 
+## Shared note lookup
+
+`--delete`, `--rename`, and `--retitle` all accept either the literal path or its
+slugified form. That two-step lookup lives in one helper, `resolve_note_rel`, which
+echoes the resolved repo-relative path and returns 1 when neither form exists (each
+caller prints its own `note not found` message). The path guards (relative-only, no
+`..`, nothing under `.git`/`.web`, `.md` only) stay per-mode, because their error
+wording names the mode.
+
 ## Design decisions on record
 
 - **Slugified path segments** — folder names are normalized; the human-readable text
@@ -175,9 +197,19 @@ is excluded for the same reason frontmatter is.
   nothing but a path. It is skipped when `MEETING_NOTES_DELETE` preapproves the prompt —
   with no question being asked, a preview informs nothing. `--rename` (content unchanged)
   and `--rebuild` (no note involved) show nothing, and reject `--no-preview` as
-  meaningless.
-- **Flags, not subcommands** (`--add`, `--rebuild`, `--delete`, `--rename`) — keeps
-  `PATH` fully freeform with no reserved words.
+  meaningless — `--retitle` likewise (it changes one frontmatter value, not the body).
+- **Retitling is its own mode, not `--title` on `--rename`** — a file's path and
+  its display label are different things, and folding them together would mean
+  either typing the path twice (`--rename X X --title T`) or dropping the
+  `OLD == NEW` guard that catches rename typos. A separate `--retitle` keeps both
+  modes single-purpose; move-and-retitle is two commands, both cheap commits.
+- **`refront.py` inserts a missing targeted key** rather than skipping it, at the
+  canonical position `clean_md.py` writes (`title`, `label`, `date`, `created`).
+  Without this, `--retitle` would silently no-op on every note added before
+  `--title` existed — exactly the notes most likely to need a title. It also lets
+  a date-fix rename repair a note whose frontmatter lacks `date`.
+- **Flags, not subcommands** (`--add`, `--rebuild`, `--delete`, `--rename`,
+  `--retitle`) — keeps `PATH` fully freeform with no reserved words.
 - **Every mode is an explicit flag, including `--add`** — the tool was originally
   named `add-notes` with adding as the implicit default and `PATH` positional. The
   rename to `meeting-notes` (2026-07-28) names the domain rather than one verb, so

@@ -5,7 +5,8 @@
 # notes repository: it is git-initialized on demand and gets a self-contained
 # `.web/` search UI deployed into it.
 #
-# Every invocation needs one mode flag: --add, --delete, --rename, or --rebuild.
+# Every invocation needs one mode flag: --add, --delete, --rename, --retitle, or
+# --rebuild.
 #
 # You choose the structure: --add takes a freeform, multi-level path (e.g.
 # project/team/standup). Notes are saved to <PATH>/<date>.md, or to an exact file
@@ -29,12 +30,14 @@ usage() {
 Usage: meeting-notes --add PATH [--title TEXT] [--from FILE | --from-clipboard] [--no-push]
        meeting-notes --delete PATH [--no-push]
        meeting-notes --rename OLD NEW [--no-push]
+       meeting-notes --retitle PATH TEXT [--no-push]
        meeting-notes --rebuild [--no-push]
 
 Store meeting notes as clean Markdown inside the current directory's notes
 repository, then commit (and push if a remote is configured).
 
-Exactly one mode flag is required: --add, --delete, --rename, or --rebuild.
+Exactly one mode flag is required: --add, --delete, --rename, --retitle, or
+--rebuild.
 
 Modes:
   --add PATH         Add a note at PATH, a destination path describing your own
@@ -53,6 +56,11 @@ Modes:
                      file keeps its name. The note's frontmatter title (and, when
                      the filename changes, its date) follows the new location.
                      Refuses to overwrite an existing note.
+  --retitle PATH TEXT
+                     Set the entry title of the note at PATH to TEXT, without
+                     moving the file. This is the same title --add --title sets:
+                     it is shown next to the date in the web UI and is
+                     searchable. Notes added without a title gain one.
   --rebuild          Redeploy ./.web from the tool template and rebuild the search
                      index without adding a note (e.g. after a tool update, or to
                      repair a modified .web). Commits the result.
@@ -91,6 +99,7 @@ Examples:
   meeting-notes --delete garagehub/daily-standup/jun-12-2026.md
   meeting-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro
   meeting-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md
+  meeting-notes --retitle garagehub/retro/jun-12-2026.md "Auth kickoff"
   meeting-notes --rebuild
 
 Tab completion is installed automatically via bash-tools (functions/).
@@ -155,6 +164,36 @@ not_blank() { [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]; }
 
 slugify() {
 	echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
+# --- Note lookup: resolve a repo-relative note path -------------------------
+# The literal path first, then its slugified form, so the original pre-slug text
+# works too (mirroring how the note was addressed when it was added). Echoes the
+# resolved path; returns 1 when neither form exists.
+resolve_note_rel() {
+	local rel="$1"
+	[ -f "$NOTES_ROOT/$rel" ] && {
+		printf '%s\n' "$rel"
+		return 0
+	}
+	local segs=() slug_segs=() last_i i s alt
+	IFS='/' read -ra segs <<<"$rel"
+	last_i=$((${#segs[@]} - 1))
+	for ((i = 0; i <= last_i; i++)); do
+		s="${segs[$i]}"
+		[ -z "$s" ] && continue
+		if [ "$i" -eq "$last_i" ]; then
+			slug_segs+=("$(slugify "${s%.md}").md")
+		else
+			slug_segs+=("$(slugify "$s")")
+		fi
+	done
+	alt="$(IFS=/; echo "${slug_segs[*]}")"
+	[ -f "$NOTES_ROOT/$alt" ] && {
+		printf '%s\n' "$alt"
+		return 0
+	}
+	return 1
 }
 
 # --- Git seeding: ensure the cwd is a clean notes repo at its root ----------
@@ -308,11 +347,13 @@ NO_PREVIEW=0
 # Tracked separately from NO_PREVIEW so the mode validation below fires only on
 # the explicit flag — an exported env var must not make --rebuild/--rename fail.
 NO_PREVIEW_FLAG=""
-MODE="" # "" (none yet) | add | delete | rename | rebuild
+MODE="" # "" (none yet) | add | delete | rename | retitle | rebuild
 DEST_PATH=""
 DELETE_PATH=""
 RENAME_OLD=""
 RENAME_NEW=""
+RETITLE_PATH=""
+RETITLE_TEXT=""
 ENTRY_TITLE=""
 SOURCE_FILE=""
 SOURCE_MODE="" # "" (default→clipboard) | file | clipboard
@@ -323,7 +364,7 @@ conflict() {
 }
 
 mode_conflict() {
-	echo "Error: --add, --rebuild, --delete, and --rename are mutually exclusive (and may be given only once)." >&2
+	echo "Error: --add, --rebuild, --delete, --rename, and --retitle are mutually exclusive (and may be given only once)." >&2
 	exit 1
 }
 
@@ -425,6 +466,27 @@ while [ "$#" -gt 0 ]; do
 		shift 2
 		MODE="rename"
 		;;
+	--retitle)
+		[ -n "$MODE" ] && mode_conflict
+		# Two arguments, as --rename, so there is no --retitle= form. TEXT is
+		# read positionally: it is free text and may legitimately start with '-'.
+		if [ "$#" -lt 3 ]; then
+			echo "Error: --retitle requires PATH and TEXT arguments." >&2
+			exit 1
+		fi
+		RETITLE_PATH="$2"
+		RETITLE_TEXT="$3"
+		if [ -z "$RETITLE_PATH" ]; then
+			echo "Error: --retitle requires PATH and TEXT arguments." >&2
+			exit 1
+		fi
+		if [ -z "$RETITLE_TEXT" ]; then
+			echo "Error: --retitle TEXT must not be empty." >&2
+			exit 1
+		fi
+		shift 2
+		MODE="retitle"
+		;;
 	--rebuild)
 		[ -n "$MODE" ] && mode_conflict
 		MODE="rebuild"
@@ -443,7 +505,7 @@ done
 
 # --- A mode flag is mandatory -------------------------------------------------
 if [ -z "$MODE" ]; then
-	echo "Error: a mode flag is required (--add, --delete, --rename, or --rebuild)." >&2
+	echo "Error: a mode flag is required (--add, --delete, --rename, --retitle, or --rebuild)." >&2
 	echo >&2
 	usage >&2
 	exit 1
@@ -509,31 +571,12 @@ if [ "$MODE" = "delete" ]; then
 	ensure_notes_repo
 	check_git_identity
 
-	# Resolve: the literal path first, then the slugified form (so the original
-	# pre-slug text works too, mirroring how the note was addressed when added).
-	TARGET="$NOTES_ROOT/$DELETE_PATH"
-	if [ ! -f "$TARGET" ]; then
-		IFS='/' read -ra del_segs <<<"$DELETE_PATH"
-		slug_segs=()
-		last_i=$((${#del_segs[@]} - 1))
-		for ((i = 0; i <= last_i; i++)); do
-			s="${del_segs[$i]}"
-			[ -z "$s" ] && continue
-			if [ "$i" -eq "$last_i" ]; then
-				slug_segs+=("$(slugify "${s%.md}").md")
-			else
-				slug_segs+=("$(slugify "$s")")
-			fi
-		done
-		alt="$(IFS=/; echo "${slug_segs[*]}")"
-		if [ -f "$NOTES_ROOT/$alt" ]; then
-			DELETE_PATH="$alt"
-			TARGET="$NOTES_ROOT/$alt"
-		else
-			echo "Error: note not found: $DELETE_PATH" >&2
-			exit 1
-		fi
+	if ! resolved="$(resolve_note_rel "$DELETE_PATH")"; then
+		echo "Error: note not found: $DELETE_PATH" >&2
+		exit 1
 	fi
+	DELETE_PATH="$resolved"
+	TARGET="$NOTES_ROOT/$DELETE_PATH"
 
 	# Show what is about to go, so the prompt can be answered on content rather
 	# than on a path alone. Skipped when the env var preapproves it: with no
@@ -607,30 +650,12 @@ if [ "$MODE" = "rename" ]; then
 	ensure_notes_repo
 	check_git_identity
 
-	# Resolve OLD: the literal path first, then the slugified form (as --delete).
-	SRC="$NOTES_ROOT/$RENAME_OLD"
-	if [ ! -f "$SRC" ]; then
-		IFS='/' read -ra old_segs <<<"$RENAME_OLD"
-		slug_segs=()
-		last_i=$((${#old_segs[@]} - 1))
-		for ((i = 0; i <= last_i; i++)); do
-			s="${old_segs[$i]}"
-			[ -z "$s" ] && continue
-			if [ "$i" -eq "$last_i" ]; then
-				slug_segs+=("$(slugify "${s%.md}").md")
-			else
-				slug_segs+=("$(slugify "$s")")
-			fi
-		done
-		alt="$(IFS=/; echo "${slug_segs[*]}")"
-		if [ -f "$NOTES_ROOT/$alt" ]; then
-			RENAME_OLD="$alt"
-			SRC="$NOTES_ROOT/$alt"
-		else
-			echo "Error: note not found: $RENAME_OLD" >&2
-			exit 1
-		fi
+	if ! resolved="$(resolve_note_rel "$RENAME_OLD")"; then
+		echo "Error: note not found: $RENAME_OLD" >&2
+		exit 1
 	fi
+	RENAME_OLD="$resolved"
+	SRC="$NOTES_ROOT/$RENAME_OLD"
 
 	# Derive the target: NEW ending in .md is the exact file; otherwise NEW is a
 	# destination folder and the file keeps its name. Segments are slugified and
@@ -692,6 +717,56 @@ if [ "$MODE" = "rename" ]; then
 	deploy_web_if_stale
 	python3 "$LIB/build_index.py" "$NOTES_ROOT"
 	commit_and_push "Rename note: $RENAME_OLD -> $NEW_REL"
+	exit 0
+fi
+
+# --- Retitle mode: set one note's entry title, reindex, commit ----------------
+# Only frontmatter `label` changes: the file stays put, so `title` (the pre-slug
+# path text) and `date` still describe its location and are left alone.
+if [ "$MODE" = "retitle" ]; then
+	case "$RETITLE_PATH" in
+	/*)
+		echo "Error: PATH must be relative (no leading '/')." >&2
+		exit 1
+		;;
+	esac
+	case "/$RETITLE_PATH/" in
+	*/../*)
+		echo "Error: PATH must not contain '..' segments." >&2
+		exit 1
+		;;
+	esac
+	case "$RETITLE_PATH" in
+	.git | .git/* | .web | .web/*)
+		echo "Error: refusing to touch .git or .web." >&2
+		exit 1
+		;;
+	esac
+	RETITLE_PATH="${RETITLE_PATH%/}"
+	case "$RETITLE_PATH" in
+	*.md) ;;
+	*)
+		echo "Error: --retitle expects a .md note file." >&2
+		exit 1
+		;;
+	esac
+
+	check_deps
+	ensure_notes_repo
+	check_git_identity
+
+	if ! resolved="$(resolve_note_rel "$RETITLE_PATH")"; then
+		echo "Error: note not found: $RETITLE_PATH" >&2
+		exit 1
+	fi
+	RETITLE_PATH="$resolved"
+
+	python3 "$LIB/refront.py" "$NOTES_ROOT/$RETITLE_PATH" --label "$RETITLE_TEXT"
+	echo "Retitled $RETITLE_PATH -> $RETITLE_TEXT"
+
+	deploy_web_if_stale
+	python3 "$LIB/build_index.py" "$NOTES_ROOT"
+	commit_and_push "Retitle note: $RETITLE_PATH -> $RETITLE_TEXT"
 	exit 0
 fi
 

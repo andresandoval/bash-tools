@@ -139,7 +139,7 @@ When creating Git commits, follow these rules:
 | `tools/git-prune-local.sh` | command `git-prune-local` | prune local git branches |
 | `tools/git-list-merged-branches.sh` | command `git-list-merged-branches` | read-only list of local/remote branches safe to delete (merged or squash-merged into the default branch, no commits after merge) |
 | `tools/nvidia-prime-run.sh` | command `nvidia-prime-run` | run a command on the NVIDIA GPU (PRIME offload) |
-| `tools/meeting-notes.sh` | command `meeting-notes` | capture meeting notes as clean Markdown under a freeform path + tree search UI, in any dir; requires a mode flag (`--add`/`--delete`/`--rename`/`--rebuild`) |
+| `tools/meeting-notes.sh` | command `meeting-notes` | capture meeting notes as clean Markdown under a freeform path + tree search UI, in any dir; requires a mode flag (`--add`/`--delete`/`--rename`/`--retitle`/`--rebuild`) |
 | `tools/meeting-notes/` | assets (not a command) | `lib/` Python helpers + `web/` UI template for `meeting-notes` |
 
 ### Multi-file tools

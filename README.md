@@ -164,6 +164,7 @@ meeting-notes --add garagehub/design-review --title "Kickoff"    # optional entr
 meeting-notes --delete garagehub/daily-standup/jun-12-2026.md    # delete a note (+reindex, commit)
 meeting-notes --rename garagehub/daily-standup/jun-12-2026.md garagehub/retro  # move, keep name
 meeting-notes --rename garagehub/retro/jun-12-2026.md garagehub/retro/jun-11-2026.md  # exact rename
+meeting-notes --retitle garagehub/retro/jun-12-2026.md "Auth kickoff"  # change the entry title only
 meeting-notes --rebuild                                          # refresh ./.web + index, no note added
 ```
 
@@ -197,6 +198,9 @@ meeting-notes --rebuild                                          # refresh ./.we
   otherwise NEW is a destination folder and the file keeps its name. The note's
   frontmatter title (and, on a filename change, its date) follows the new location;
   an existing target is never overwritten.
+- `--retitle PATH TEXT` changes just the **entry title** — the same one `--add --title`
+  sets — leaving the file where it is. Notes added without a title gain one. Use it when
+  the note is in the right place and only its label is wrong.
 - After a successful `--add` the tool prints a short excerpt of what it just stored, so
   you can confirm the right clipboard content landed without serving `./.web` and
   checking in a browser. `--delete` prints the same excerpt *before* its confirmation
@@ -292,3 +296,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-08-04 | `git-navigation.bash`: add `goto-git-main` (main repository root from anywhere in the repo) and `goto-git-worktree [NAME]` (jump to a worktree by directory/branch name — exact then substring — or from a numbered menu, with tab-completion); `goto-git-root` keeps its behavior but now names the worktree and branch when you land in a linked one, and points at the new functions where there is no working tree. Both layouts supported: normal clone with linked worktrees, and bare repo with sibling worktrees |
 | 2026-08-04 | `git-navigation.bash`: all three functions take `-h` / `--help` (usage, description, and the sibling commands), reject arguments they do not accept, and complete `--help` |
 | 2026-08-19 | `meeting-notes`: print a content preview (head+tail excerpt with line/word counts) after `--add` commits and before the `--delete` confirmation prompt, so a mis-copied clipboard is caught without serving `./.web` in a browser; suppress with `--no-preview` / `MEETING_NOTES_NO_PREVIEW=1` |
+| 2026-08-21 | `meeting-notes`: add `--retitle PATH TEXT`, a fifth mode that changes only a note's entry title (frontmatter `label`) without moving the file, so retitling no longer needs a `--rename` round-trip; `refront.py` now *inserts* a targeted frontmatter key the note lacks (at `clean_md.py`'s canonical position) instead of skipping it, so notes predating `--title` can be titled; the literal→slugified note lookup shared by `--delete`/`--rename`/`--retitle` is now one `resolve_note_rel` helper |
