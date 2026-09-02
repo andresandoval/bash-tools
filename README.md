@@ -38,6 +38,7 @@ bash-tools/
 │       └── meeting-notes.md
 ├── functions/                # *.bash -- sourced from ~/.bashrc (shell functions)
 │   ├── git-navigation.bash
+│   ├── maven-build.bash
 │   └── meeting-notes-completion.bash
 └── tools/                    # *.sh -- exposed as commands on your PATH
     ├── age-pdf.sh
@@ -246,6 +247,7 @@ meeting-notes rebuild                                          # refresh ./.web 
 | `environment/git-prompt.bash` | environment | Two-line, Git-aware Catppuccin Macchiato prompt |
 | `environment/wsl-terminal.bash` | environment | WSL: tab title follows `cd`; Windows Terminal duplicates tabs/panes in the same directory |
 | `functions/git-navigation.bash` | functions | `goto-git-root` -- cd to the current working tree's root; `goto-git-main` -- cd to the main repository root from any worktree; `goto-git-worktree [NAME]` -- cd to any worktree by directory/branch name or from a numbered menu (tab-completed). Each takes `--help` |
+| `functions/maven-build.bash` | functions | `mvnb MODULE [MVN_ARG...]` -- build and install one module of a Maven multimodule project with its dependencies (`mvn -pl MODULE -am clean install -DskipTests`); extra arguments go to Maven unchanged, module names are tab-completed from `./pom.xml`, takes `--help` |
 | `functions/meeting-notes-completion.bash` | function | Tab-completion for the `meeting-notes` command (cwd-aware) |
 
 ## 📝 7. Adding New Content
@@ -304,3 +306,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-08-19 | `meeting-notes`: print a content preview (head+tail excerpt with line/word counts) after `--add` commits and before the `--delete` confirmation prompt, so a mis-copied clipboard is caught without serving `./.web` in a browser; suppress with `--no-preview` / `MEETING_NOTES_NO_PREVIEW=1` |
 | 2026-08-21 | `meeting-notes`: add `--retitle PATH TEXT`, a fifth mode that changes only a note's entry title (frontmatter `label`) without moving the file, so retitling no longer needs a `--rename` round-trip; `refront.py` now *inserts* a targeted frontmatter key the note lacks (at `clean_md.py`'s canonical position) instead of skipping it, so notes predating `--title` can be titled; the literal→slugified note lookup shared by `--delete`/`--rename`/`--retitle` is now one `resolve_note_rel` helper |
 | 2026-08-21 | `meeting-notes`: the five operations are now **subcommands** instead of mode flags — `meeting-notes add PATH`, `delete PATH`, `rename OLD NEW`, `retitle PATH TEXT`, `rebuild` — so an operation (a bare word) no longer looks like a parameter (`--flag`). Hard cut-over: the old `--add`/`--delete`/`--rename`/`--retitle`/`--rebuild` forms (and `--add=`/`--delete=`) fail as `unknown option`, naming the invocation that replaces them and pointing at `--help`. Help is per command (`meeting-notes <command> --help`), options may precede or follow a command's positional arguments, and the frontmatter value passed to `refront.py` now uses the `--label=TEXT` form so a title starting with `-` is accepted. Completion dispatches on the command word |
+| 2026-09-02 | Add `functions/maven-build.bash`: the `mvnb MODULE [MVN_ARG...]` command builds and installs one module of a Maven multimodule project together with its dependencies (`mvn -pl MODULE -am clean install -DskipTests`). Run it from the reactor root; it refuses to run where there is no `pom.xml`, and where the first argument is an option instead of a module. Extra arguments are appended to Maven unchanged, so `-DskipTests=false` turns the tests back on. It prints the command before running it, calls `./mvnw` when the project has an executable one, and tab-completes module names from the `<module>` entries of `./pom.xml` |
