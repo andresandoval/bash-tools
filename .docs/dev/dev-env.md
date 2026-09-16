@@ -299,12 +299,15 @@ Add them locally (not committed):
 
 | Command | 0 | 1 | 2 |
 |---|---|---|---|
-| `apply` | everything applied or already `ok` | any error | manifest has no entries |
+| `apply` | every entry applied or already `ok` | any error, or an entry left unapplied (drift without `--force`) | manifest has no entries |
 | `status` | every entry `ok` or `skipped` | any other classification, or an error | — |
 | `diff` | no differences | differences found | error (bad usage, unreadable file) |
 | `pull` | pulled, or nothing to pull | any error, or the prompt was answered no | — |
 | `remove` | removed what it owns | any error | — |
 | `adopt` | adopted | any error | — |
+
+`apply` returns 1 on drift because the target does not match the store when it finishes.
+The drift line names the commands that resolve it.
 
 `diff` follows the `diff` convention on purpose: "differences found" is not a failure, and 2
 is the error code.
