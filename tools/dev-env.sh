@@ -952,6 +952,30 @@ confirm_or_exit() {
 	exit 1
 }
 
+# --- adopt ------------------------------------------------------------------
+
+# Append one entry to the manifest. Existing content is never rewritten, so
+# comments and hand-made ordering survive.
+append_manifest_entry() {
+	local mode="$1" source="$2" dest="$3"
+	if [ -s "$MANIFEST" ] && [ -n "$(tail -c 1 -- "$MANIFEST")" ]; then
+		printf '\n' >>"$MANIFEST"
+	fi
+	printf '\n[%s]\nsource = %s\ndest   = %s\n' "$mode" "$source" "$dest" >>"$MANIFEST"
+}
+
+# Turn an adopt argument into a path relative to the target root.
+adopt_rel() {
+	local p="$1"
+	case "$p" in
+	"$TARGET_ROOT"/*) p="${p#"$TARGET_ROOT"/}" ;;
+	/*) p="${p#/}" ;;
+	esac
+	p="$(norm_path "$p")"
+	p="${p#./}"
+	printf '%s' "$p"
+}
+
 # --- Commands (filled in by later tasks) ------------------------------------
 cmd_apply() {
 	parse_options apply "$@"
@@ -1188,7 +1212,68 @@ cmd_remove() {
 cmd_adopt() {
 	parse_options adopt "$@"
 	require_store
-	die "not implemented yet"
+	if [ "${#ARGS[@]}" -lt 2 ]; then die "a path is required (usage: dev-env adopt STORE PATH...)"; fi
+	if [ -n "$OPT_AS" ] && [ "${#ARGS[@]}" -gt 2 ]; then die "--as works only with one PATH"; fi
+	case "$OPT_MODE" in
+	link | copy) ;;
+	*) die "--mode must be link or copy, not '$OPT_MODE'" ;;
+	esac
+
+	local store_path
+	store_path="$(store_path_for "${ARGS[0]}")"
+	if [ ! -e "$store_path" ]; then
+		mkdir -p -- "$store_path"
+		printf 'Created store: %s\n' "$store_path"
+	fi
+	if [ -d "$store_path" ] && [ ! -f "$store_path/$MANIFEST_NAME" ]; then
+		printf 'version = %s\n' "$MANIFEST_VERSION" >"$store_path/$MANIFEST_NAME"
+		printf 'Created manifest: %s/%s\n' "$store_path" "$MANIFEST_NAME"
+	fi
+	resolve_store "${ARGS[0]}"
+	resolve_target
+	parse_manifest
+
+	# Check every path first: adopt moves files, so a failure halfway through
+	# would leave the target in pieces.
+	local a i rel abs dest name rels=() names=() dests=()
+	for a in "${ARGS[@]:1}"; do
+		rel="$(adopt_rel "$a")"
+		if [ -z "$rel" ] || path_has_dotdot "$rel"; then die "not a path inside the target: $a"; fi
+		abs="$TARGET_ROOT/$rel"
+		if [ ! -e "$abs" ] && [ ! -L "$abs" ]; then die "not found in the target: $rel"; fi
+		if [ -L "$abs" ]; then die "already a symlink, nothing to adopt: $rel"; fi
+		dest="/$rel"
+		for i in "${!E_DEST[@]}"; do
+			if [ "${E_DEST[$i]}" = "$dest" ]; then die "already in the manifest: $dest (line ${E_LINE[$i]})"; fi
+		done
+		name="${OPT_AS:-$rel}"
+		if [ -e "$STORE_ROOT/$name" ] || [ -L "$STORE_ROOT/$name" ]; then
+			die "already in the store: $name — pass --as NAME to store it under another name"
+		fi
+		rels+=("$rel")
+		names+=("$name")
+		dests+=("$dest")
+	done
+
+	printf 'Store:  %s\n' "$STORE_ROOT"
+	printf 'Target: %s\n\n' "$TARGET_ROOT"
+
+	for i in "${!rels[@]}"; do
+		abs="$TARGET_ROOT/${rels[$i]}"
+		mkdir -p -- "$(dirname "$STORE_ROOT/${names[$i]}")"
+		if [ "$OPT_MODE" = copy ]; then
+			cp -R -p -- "$abs" "$STORE_ROOT/${names[$i]}"
+			report copied "${names[$i]}" "from ${dests[$i]}"
+		else
+			mv -- "$abs" "$STORE_ROOT/${names[$i]}"
+			ln -s -- "$STORE_ROOT/${names[$i]}" "$abs"
+			report adopted "${names[$i]}" "linked back to ${dests[$i]}"
+		fi
+		append_manifest_entry "$OPT_MODE" "${names[$i]}" "${dests[$i]}"
+	done
+
+	git_ignore_report
+	exit 0
 }
 
 # --- Dispatch ---------------------------------------------------------------
