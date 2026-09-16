@@ -887,6 +887,66 @@ classify_entry() {
 	return 0
 }
 
+# --- Entry selection (diff, pull) -------------------------------------------
+
+SELECTED=()
+
+# Turn PATH arguments into entry indexes. A path matches an entry's dest (with
+# or without the leading slash) or its store source. With no arguments, every
+# entry of MODE is selected.
+select_entries() {
+	local want_mode="$1"
+	shift
+	local a i found
+	SELECTED=()
+	if [ "$#" -eq 0 ]; then
+		for i in "${!E_MODE[@]}"; do
+			if [ "${E_MODE[$i]}" = "$want_mode" ]; then SELECTED+=("$i"); fi
+		done
+		return 0
+	fi
+	for a in "$@"; do
+		found=0
+		for i in "${!E_MODE[@]}"; do
+			if [ "${E_DEST[$i]}" = "$a" ] || [ "${E_DEST[$i]}" = "/$a" ] || [ "${E_SOURCE[$i]}" = "$a" ]; then
+				if [ "${E_MODE[$i]}" != "$want_mode" ]; then
+					printf 'dev-env: a %s entry needs no %s: %s\n' "${E_MODE[$i]}" "$CMD" "${E_DEST[$i]}" >&2
+					exit 2
+				fi
+				SELECTED+=("$i")
+				found=1
+			fi
+		done
+		if [ "$found" = 0 ]; then
+			printf 'dev-env: no entry matches: %s\n' "$a" >&2
+			exit 2
+		fi
+	done
+	return 0
+}
+
+# Ask before writing into the store. --yes wins over the environment, because it
+# is typed for this one run.
+confirm_or_exit() {
+	local prompt="$1" answer
+	if [ "$OPT_YES" = 1 ]; then return 0; fi
+	case "${DEV_ENV_PULL:-}" in
+	yes) return 0 ;;
+	no)
+		printf 'Cancelled.\n'
+		exit 1
+		;;
+	esac
+	if [ ! -e /dev/tty ]; then die "not a terminal: pass --yes (or DEV_ENV_PULL=yes)"; fi
+	printf '%s [y/N] ' "$prompt"
+	read -r answer </dev/tty || answer=""
+	case "$answer" in
+	y | Y | yes | YES) return 0 ;;
+	esac
+	printf 'Cancelled.\n'
+	exit 1
+}
+
 # --- Commands (filled in by later tasks) ------------------------------------
 cmd_apply() {
 	parse_options apply "$@"
@@ -950,13 +1010,88 @@ cmd_status() {
 cmd_diff() {
 	parse_options diff "$@"
 	require_store
-	die "not implemented yet"
+	resolve_store "${ARGS[0]}"
+	resolve_target
+	parse_manifest
+	select_entries copy "${ARGS[@]:1}"
+
+	local i src dest rc=0 one=0
+	if [ "${#SELECTED[@]}" -eq 0 ]; then
+		printf 'This manifest has no copy entries; a link entry is the same file on both sides.\n'
+		exit 0
+	fi
+	for i in "${SELECTED[@]}"; do
+		src="$(entry_source "$i")"
+		dest="$(entry_dest "$i")"
+		if [ ! -e "$src" ]; then
+			printf '%s: missing in the store\n' "${E_SOURCE[$i]}"
+			rc=1
+			continue
+		fi
+		if [ ! -e "$dest" ]; then
+			printf '%s: missing in the target\n' "${E_DEST[$i]}"
+			rc=1
+			continue
+		fi
+		one=0
+		if [ -d "$src" ]; then
+			diff -ru -- "$src" "$dest" || one=$?
+		else
+			diff -u --label "store/${E_SOURCE[$i]}" --label "target${E_DEST[$i]}" -- "$src" "$dest" || one=$?
+		fi
+		if [ "$one" -ge 2 ]; then die "diff failed for ${E_DEST[$i]}"; fi
+		if [ "$one" -eq 1 ]; then rc=1; fi
+	done
+	exit "$rc"
 }
 
 cmd_pull() {
 	parse_options pull "$@"
 	require_store
-	die "not implemented yet"
+	resolve_store "${ARGS[0]}"
+	resolve_target
+	parse_manifest
+	select_entries copy "${ARGS[@]:1}"
+
+	local i src dest todo=()
+	for i in ${SELECTED[@]+"${SELECTED[@]}"}; do
+		src="$(entry_source "$i")"
+		dest="$(entry_dest "$i")"
+		if [ ! -e "$dest" ] || [ -L "$dest" ]; then continue; fi
+		if [ -e "$src" ] && same_content "$src" "$dest"; then continue; fi
+		todo+=("$i")
+	done
+	if [ "${#todo[@]}" -eq 0 ]; then
+		printf 'Nothing to pull: every copied file matches the store.\n'
+		exit 0
+	fi
+
+	printf 'Store:  %s\n' "$STORE_ROOT"
+	printf 'Target: %s\n\n' "$TARGET_ROOT"
+	printf 'These store files will be replaced with the target version:\n'
+	for i in "${todo[@]}"; do
+		printf '  %s  <-  %s\n' "${E_SOURCE[$i]}" "${E_DEST[$i]}"
+	done
+	printf 'The current store version is kept as <name>%s.\n\n' "$BAK_SUFFIX"
+	confirm_or_exit "Pull these files into the store?"
+
+	# Check every backup path before moving anything, so the run is all or nothing.
+	for i in "${todo[@]}"; do
+		src="$(entry_source "$i")"
+		if ! backup_free "$src"; then
+			die "backup path already taken: ${E_SOURCE[$i]}$BAK_SUFFIX — move or delete it first"
+		fi
+	done
+
+	for i in "${todo[@]}"; do
+		src="$(entry_source "$i")"
+		dest="$(entry_dest "$i")"
+		rm -f -- "$src$BAK_SUFFIX"
+		mv -- "$src" "$src$BAK_SUFFIX"
+		cp -R -p -- "$dest" "$src"
+		report pulled "${E_SOURCE[$i]}"
+	done
+	exit 0
 }
 
 cmd_remove() {
