@@ -1120,7 +1120,69 @@ cmd_pull() {
 cmd_remove() {
 	parse_options remove "$@"
 	require_store
-	die "not implemented yet"
+	if [ "${#ARGS[@]}" -gt 1 ]; then die "unexpected argument: ${ARGS[1]}"; fi
+	resolve_store "${ARGS[0]}"
+	resolve_target
+	parse_manifest
+
+	printf 'Store:  %s\n' "$STORE_ROOT"
+	printf 'Target: %s\n\n' "$TARGET_ROOT"
+
+	local i src dest rel rc=0 parent
+	for i in "${!E_MODE[@]}"; do
+		src="$(entry_source "$i")"
+		dest="$(entry_dest "$i")"
+		rel="${E_DEST[$i]}"
+
+		case "${E_MODE[$i]}" in
+		link)
+			if is_store_link "$dest" "$src"; then
+				rm -- "$dest"
+				report removed "$rel"
+			elif [ -e "$dest" ] || [ -L "$dest" ]; then
+				report kept "$rel" "not owned by this store"
+				rc=1
+			else
+				report absent "$rel"
+			fi
+			;;
+		copy)
+			if [ -L "$dest" ]; then
+				report kept "$rel" "not owned by this store"
+				rc=1
+			elif [ ! -e "$dest" ]; then
+				report absent "$rel"
+			elif [ -e "$src" ] && same_content "$src" "$dest"; then
+				rm -rf -- "$dest"
+				report removed "$rel"
+			elif [ "$OPT_FORCE" = 1 ]; then
+				rm -rf -- "$dest"
+				report removed "$rel" "discarded local changes"
+			else
+				report kept "$rel" "differs from the store; run 'dev-env diff' or remove --force"
+				rc=1
+			fi
+			;;
+		esac
+
+		if [ "$OPT_RESTORE" = 1 ] && { [ -e "$dest$BAK_SUFFIX" ] || [ -L "$dest$BAK_SUFFIX" ]; }; then
+			if [ -e "$dest" ] || [ -L "$dest" ]; then
+				report kept "$rel$BAK_SUFFIX" "the target path is still in use"
+				rc=1
+			else
+				mv -- "$dest$BAK_SUFFIX" "$dest"
+				report restored "$rel"
+			fi
+		fi
+
+		# --force-dir directories are not tracked, so an emptied one is reported
+		# rather than removed: the tool must not delete what it did not create.
+		parent="$(dirname "$dest")"
+		if [ -d "$parent" ] && [ "$parent" != "$TARGET_ROOT" ] && [ -z "$(ls -A -- "$parent")" ]; then
+			report empty "$(dirname "$rel")" "directory left in place"
+		fi
+	done
+	exit "$rc"
 }
 
 cmd_adopt() {
