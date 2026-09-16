@@ -147,6 +147,7 @@ Each enabled tool becomes a command named after its file (minus `.sh`).
 | `git-list-merged-branches` | `tools/git-list-merged-branches.sh` | Read-only list of local/remote branches safe to delete: merged or squash-merged into the default branch with no commits after the merge |
 | `nvidia-prime-run` | `tools/nvidia-prime-run.sh` | Run a command on the NVIDIA GPU via PRIME render offload |
 | `meeting-notes` | `tools/meeting-notes.sh` | Capture meeting notes as clean Markdown under a freeform path in the current dir, with a built-in tree search UI and git auto-commit |
+| `dev-env` | `tools/dev-env.sh` | Apply a central store of environment files (`.env`, config folders) to any checkout, git worktree, or plain directory, through the store's manifest |
 
 Many tools provide a usage block; run them with `--help` where supported.
 
@@ -236,6 +237,66 @@ meeting-notes rebuild                                          # refresh ./.web 
   `delete`/`rename`/`retitle`, and each command's own options; enabled automatically
   via `functions/meeting-notes-completion.bash`. Requires `python3` and `git`.
 
+### `dev-env` — one source of truth for `.env` files
+
+A new git worktree starts without the files git does not track: `.env` files, local
+config folders, seed scripts. `dev-env` keeps them in one store per project, outside
+every checkout, and links them into any worktree on demand.
+
+```bash
+~/Dev/environments/my-project/
+  .manifest          # what goes where
+  root-module.env
+  auth-service.env
+```
+
+```ini
+version = 1
+
+[link]
+source = root-module.env
+dest   = /.env
+
+[link]
+source = auth-service.env
+dest   = /auth/.env
+
+[copy]
+source = seed.sh
+dest   = /scripts/seed.sh
+```
+
+Then, from any worktree:
+
+```bash
+dev-env apply my-project          # link everything (a bare name means $DEV_ENV_HOME/my-project)
+dev-env apply my-project --force-dir   # also create the directories it needs
+dev-env status my-project         # what is linked, missing, drifted, or foreign
+dev-env diff my-project           # how copied files differ from the store
+dev-env pull my-project           # copy those changes back into the store
+dev-env remove my-project         # unlink what the store owns
+dev-env adopt my-project .env     # move an existing file into the store and link it back
+```
+
+Behavior worth knowing:
+
+- The store is named on every run. Nothing is inferred from the repository, so the
+  same store works on a worktree, a clone, or a plain directory.
+- The run is all or nothing: the manifest, every source, and the target's directory
+  structure are checked first. A missing parent directory is an error, and
+  `--force-dir` is how you say "create it".
+- A file already in the way is moved to `<name>.dev-env.bak`, never deleted.
+- `link` entries are absolute symlinks. `copy` entries are real copies, for the cases
+  a symlink does not survive (a Docker build context, a tool that rewrites the file).
+  A copy that differs from the store is reported as drift and is never overwritten
+  without `--force`.
+- Applied paths that git does not ignore are listed with the command to fix it. The
+  tool never edits `.gitignore` or `.git/info/exclude` itself.
+- `DEV_ENV_HOME` sets the lookup root for bare store names (default
+  `~/Dev/environments`).
+
+Full specification: `.docs/dev/dev-env.md`.
+
 ## ⚙️ 6. Aliases, Environment & Functions
 
 | File | Type | Provides |
@@ -307,3 +368,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-08-21 | `meeting-notes`: add `--retitle PATH TEXT`, a fifth mode that changes only a note's entry title (frontmatter `label`) without moving the file, so retitling no longer needs a `--rename` round-trip; `refront.py` now *inserts* a targeted frontmatter key the note lacks (at `clean_md.py`'s canonical position) instead of skipping it, so notes predating `--title` can be titled; the literal→slugified note lookup shared by `--delete`/`--rename`/`--retitle` is now one `resolve_note_rel` helper |
 | 2026-08-21 | `meeting-notes`: the five operations are now **subcommands** instead of mode flags — `meeting-notes add PATH`, `delete PATH`, `rename OLD NEW`, `retitle PATH TEXT`, `rebuild` — so an operation (a bare word) no longer looks like a parameter (`--flag`). Hard cut-over: the old `--add`/`--delete`/`--rename`/`--retitle`/`--rebuild` forms (and `--add=`/`--delete=`) fail as `unknown option`, naming the invocation that replaces them and pointing at `--help`. Help is per command (`meeting-notes <command> --help`), options may precede or follow a command's positional arguments, and the frontmatter value passed to `refront.py` now uses the `--label=TEXT` form so a title starting with `-` is accepted. Completion dispatches on the command word |
 | 2026-09-02 | Add `functions/maven-build.bash`: the `mvnb MODULE [MVN_ARG...]` command builds and installs one module of a Maven multimodule project together with its dependencies (`mvn -pl MODULE -am clean install -DskipTests`). Run it from the reactor root; it refuses to run where there is no `pom.xml`, and where the first argument is an option instead of a module. Extra arguments are appended to Maven unchanged, so `-DskipTests=false` turns the tests back on. It prints the command before running it, calls `./mvnw` when the project has an executable one, and tab-completes module names from the `<module>` entries of `./pom.xml` |
+| 2026-09-16 | Add `dev-env` tool: a central store of environment files (`.env` files, config folders, seed scripts) is described once in a `.manifest` and applied to any checkout, git worktree, or plain directory. `apply` creates absolute symlinks (or real copies for `[copy]` entries) after an all-or-nothing preflight that checks the manifest, every source, and the target's directory structure; `--force-dir` seeds missing directories and a file in the way is kept as `<name>.dev-env.bak`. `status` classifies every entry (ok / missing / drift / foreign / stale-source / no-parent), `diff` and `pull` carry changes to copied files back into the store, `remove` unlinks only what the store owns, and `adopt` moves existing files into the store and links them back. Applied paths that git does not ignore are reported with the command to fix it; nothing is ever written into the bash-tools repo. Tab completion in `functions/dev-env-completion.bash` |

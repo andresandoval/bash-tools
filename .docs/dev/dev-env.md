@@ -108,7 +108,8 @@ optional = true
   segment are errors. It may be flat (`auth-service.env`) or nested (`auth/.env`) — the
   store layout is your choice.
 - `dest` starts with `/`, which means the target root. Any `..` segment is an error. A
-  trailing `/` is stripped.
+  trailing `/` is stripped. `dest` must name a path inside the target root (not the root
+  itself: `/.` or `dest = /` is an error with "must name a path inside the target root").
 - Both are normalized and must stay inside their root.
 
 ### Rejected manifests
@@ -171,7 +172,11 @@ Unified diff for `copy` entries, store version against target version: `diff -u`
 arguments it covers every copy entry; identical entries print nothing.
 
 `PATH` selects entries. It matches an entry's `dest` (with or without the leading `/`) or its
-`source`. An argument that matches nothing is an error.
+`source`. An argument that matches nothing is an error. When the same entry is named twice on
+the command line (e.g. `dev-env diff store /.env .env`), it is selected once.
+
+Exit 2 when the `diff` utility itself fails (e.g. unreadable file). Exit 1 when differences
+are found. Exit 0 when there are none.
 
 ### pull
 
@@ -184,13 +189,19 @@ once for confirmation, and then backs up each store version to `<source>.dev-env
 overwriting it. `--yes` (or `DEV_ENV_PULL=yes`) skips the prompt; `DEV_ENV_PULL=no` answers
 no.
 
+**Duplicate source guard:** If two selected entries resolve to the same store file, `pull`
+exits 1 with `two entries pull into the same store file: <source>` and lists both target
+destinations. A single store file cannot accept two different target versions at once.
+
 ### remove
 
 Delete what this store owns in the target.
 
 - A `link` entry whose `dest` is a symlink resolving to this store's `source` is removed.
 - A `copy` entry whose `dest` is identical to the store version is removed.
-- A drifted copy is **kept** and reported, unless `--force`. Run `diff` or `pull` first.
+- A drifted copy is **kept** and reported as "differs from the store", unless `--force`.
+  Run `diff` or `pull` first. With `--force`, it is removed and reported with the note
+  `--force: content differed from the store`.
 - Anything else is kept and reported as foreign. The tool never deletes what it does not own.
 - `--restore` moves each `<dest>.dev-env.bak` back into place after the removal.
 
@@ -202,12 +213,19 @@ directory is reported, not removed.
 Move files that already exist in the target into the store, add manifest entries, and link
 them back. This is how a store is built the first time.
 
-- Each `PATH` is relative to the target root (a leading `/` is optional) or an absolute path
-  inside it. It must exist, and must not already be managed by this store.
+- Each `PATH` is relative to the target root (a leading `/` is optional). If absolute, it
+  must be inside the target root; absolute paths outside it are rejected with `not inside
+  the target root: <path>`.
+- Duplicate `PATH` arguments in a single run are rejected with `given twice in one run: <path>`.
+  The same check prevents the same store name from being used twice, so two adopted files
+  stay separate.
 - The default store name mirrors the path: `/auth/.env` → `auth/.env`, `/.env` → `.env`.
   `--as NAME` sets a flat name instead (`auth-service.env`), and is allowed only with exactly
-  one `PATH`. Mirroring keeps the leading dot, so `/.some-folder` becomes a hidden entry in
-  the store; use `--as some-folder` when you want the store to be readable with plain `ls`.
+  one `PATH`. The `NAME` is validated with the same rules as manifest `source`: relative
+  (no leading `/`), and no `..` segment. A `/` inside the name is still allowed because it
+  mirrors the destination structure. Mirroring keeps the leading dot, so `/.some-folder`
+  becomes a hidden entry in the store; use `--as some-folder` when you want the store to be
+  readable with plain `ls`.
 - `--mode copy` records a `[copy]` entry: the file is copied into the store and the original
   stays where it is. The default (`link`) moves the file into the store and symlinks it back.
 - It refuses when the `dest` is already in the manifest, or when the store `source` path is
@@ -363,6 +381,23 @@ is the error code.
 - **Backups use the `.dev-env.bak` suffix in place**, not a hidden directory. The backup sits
   next to the file it replaced, so it is visible in the directory you are working in, and
   `remove --restore` finds it with no bookkeeping.
+- **`pull` refuses duplicate store sources.** When two selected entries resolve to the same
+  store file, `pull` exits 1 instead of silently overwriting the first with the second. A
+  single store file cannot accept two different target versions at once, and such a collision
+  is always a mistake in the manifest (two destinations feeding one source).
+- **PATH arguments are de-duplicated.** When an entry is selected twice on the command line
+  (e.g. by different names or from different selection rules), it is processed once. This
+  simplifies the logic and prevents duplicate reports.
+- **`adopt --as NAME` is validated.** The `NAME` is checked with the same rules as manifest
+  `source`: relative, no leading `/`, and no `..` segment. An unvalidated name could move a
+  file outside the store, breaking the all-or-nothing guarantee. A `/` inside the name is
+  still legal, because it mirrors the destination structure (e.g. `auth/service.env`).
+- **`adopt` refuses absolute paths outside the target root.** An absolute `PATH` that does
+  not resolve inside the target is rejected instead of being reinterpreted as relative. This
+  catch mismatched stores and wrong targets early, when the command is typed.
+- **`adopt` refuses duplicate PATH arguments.** The same path cannot appear twice in one run
+  (even with different syntax), because the all-or-nothing check is run before any move and
+  a duplicate would only surface mid-move if it slipped past — a guarantee break.
 
 ## Known considerations / extension points
 

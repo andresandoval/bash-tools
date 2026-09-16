@@ -132,6 +132,7 @@ When creating Git commits, follow these rules:
 | `functions/git-navigation.bash` | sourced | worktree-aware navigation: `goto-git-root`, `goto-git-main`, `goto-git-worktree` (+ its completion) |
 | `functions/maven-build.bash` | sourced | `mvnb MODULE [MVN_ARG...]` -- build/install one Maven module with its dependencies (+ its completion) |
 | `functions/meeting-notes-completion.bash` | sourced | tab-completion for the `meeting-notes` command |
+| `functions/dev-env-completion.bash` | sourced | tab-completion for the `dev-env` command |
 | `tools/age-pdf.sh` | command `age-pdf` | age a PDF to look like an old scan |
 | `tools/appimage-install.sh` | command `appimage-install` | install an AppImage as a desktop app |
 | `tools/cleanup-old-kernels.sh` | command `cleanup-old-kernels` | remove old kernels (dnf) |
@@ -142,6 +143,7 @@ When creating Git commits, follow these rules:
 | `tools/nvidia-prime-run.sh` | command `nvidia-prime-run` | run a command on the NVIDIA GPU (PRIME offload) |
 | `tools/meeting-notes.sh` | command `meeting-notes` | capture meeting notes as clean Markdown under a freeform path + tree search UI, in any dir; takes a subcommand (`add`/`delete`/`rename`/`retitle`/`rebuild`) |
 | `tools/meeting-notes/` | assets (not a command) | `lib/` Python helpers + `web/` UI template for `meeting-notes` |
+| `tools/dev-env.sh` | command `dev-env` | apply a central store of environment files (`.env`, config folders) to any checkout/worktree/directory from a manifest; takes a subcommand (`apply`/`status`/`diff`/`pull`/`remove`/`adopt`) |
 
 ### Multi-file tools
 
