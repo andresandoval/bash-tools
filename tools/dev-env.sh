@@ -313,6 +313,287 @@ require_store() {
 	fi
 }
 
+# --- Path helpers -----------------------------------------------------------
+
+# Strip leading and trailing whitespace.
+trim() {
+	local s="$1"
+	s="${s#"${s%%[![:space:]]*}"}"
+	s="${s%"${s##*[![:space:]]}"}"
+	printf '%s' "$s"
+}
+
+# Collapse repeated slashes and "./" segments, then drop a trailing slash. This
+# is string work only: the path does not have to exist.
+norm_path() {
+	local p="$1"
+	while [ "$p" != "${p//\/\//\/}" ]; do p="${p//\/\//\/}"; done
+	while [ "$p" != "${p//\/.\//\/}" ]; do p="${p//\/.\//\/}"; done
+	p="${p%/.}"
+	if [ "${#p}" -gt 1 ]; then p="${p%/}"; fi
+	printf '%s' "$p"
+}
+
+# True when any segment of the path is "..". Checked as a segment, so a file
+# named "..env" is still allowed.
+path_has_dotdot() {
+	case "/$1/" in
+	*/../*) return 0 ;;
+	esac
+	return 1
+}
+
+# --- Store resolution -------------------------------------------------------
+
+# Turn the STORE argument into a filesystem path. A bare name (no slash, no
+# leading dot or tilde) is looked up under DEV_ENV_HOME; anything else is a path.
+store_path_for() {
+	local arg="$1" path
+	case "$arg" in
+	"") die "a store is required (run 'dev-env --help')" ;;
+	*/* | /* | .* | "~"*) path="$arg" ;;
+	*) path="$DEV_ENV_HOME/$arg" ;;
+	esac
+	case "$path" in
+	"~/"*) path="$HOME/${path#\~/}" ;;
+	esac
+	printf '%s' "$path"
+}
+
+# Set STORE_ROOT and MANIFEST. A directory means "<dir>/.manifest"; a file is
+# the manifest itself, so a store can hold more than one.
+resolve_store() {
+	local path
+	path="$(store_path_for "$1")"
+	if [ -d "$path" ]; then
+		STORE_ROOT="$(cd "$path" && pwd -P)"
+		MANIFEST="$STORE_ROOT/$MANIFEST_NAME"
+	elif [ -f "$path" ]; then
+		MANIFEST="$(readlink -f -- "$path")"
+		STORE_ROOT="$(dirname "$MANIFEST")"
+	else
+		die "store not found: $path"
+	fi
+	if [ ! -f "$MANIFEST" ]; then die "no $MANIFEST_NAME in $STORE_ROOT"; fi
+	if [ ! -r "$MANIFEST" ]; then die "manifest is not readable: $MANIFEST"; fi
+}
+
+# --- Manifest parser --------------------------------------------------------
+#
+# The format is deliberately small: "version = 1", then one [link] or [copy]
+# section per entry with source/dest/optional keys. Every problem is reported
+# with its line number, and an unknown key is an error rather than a warning —
+# a silently ignored "optonal = true" is a file that never appears.
+
+PARSE_ERRORS=0
+VERSION_SEEN=0
+CUR_SECTION=""
+CUR_SOURCE=""
+CUR_DEST=""
+CUR_OPTIONAL=""
+CUR_LINE=0
+
+manifest_err() {
+	printf '%s:%s: %s\n' "$MANIFEST" "$1" "$2" >&2
+	PARSE_ERRORS=$((PARSE_ERRORS + 1))
+}
+
+# Close the section that just ended and append it as an entry.
+flush_entry() {
+	if [ -z "$CUR_SECTION" ]; then return 0; fi
+	if [ -z "$CUR_SOURCE" ]; then manifest_err "$CUR_LINE" "[$CUR_SECTION] has no 'source'"; fi
+	if [ -z "$CUR_DEST" ]; then manifest_err "$CUR_LINE" "[$CUR_SECTION] has no 'dest'"; fi
+	if [ -n "$CUR_SOURCE" ] && [ -n "$CUR_DEST" ]; then
+		E_MODE+=("$CUR_SECTION")
+		E_SOURCE+=("$CUR_SOURCE")
+		E_DEST+=("$CUR_DEST")
+		E_OPTIONAL+=("${CUR_OPTIONAL:-false}")
+		E_LINE+=("$CUR_LINE")
+	fi
+	CUR_SECTION=""
+	CUR_SOURCE=""
+	CUR_DEST=""
+	CUR_OPTIONAL=""
+	return 0
+}
+
+# A key before the first section. Only 'version' belongs there, and it is what
+# makes a future format change detectable instead of silently misread.
+parse_preamble_key() {
+	local lineno="$1" key="$2" val="$3"
+	if [ "$key" != version ]; then
+		manifest_err "$lineno" "'$key' is outside a section (expected [link] or [copy] first)"
+		return 0
+	fi
+	if [ "$VERSION_SEEN" = 1 ]; then
+		manifest_err "$lineno" "duplicate 'version'"
+		return 0
+	fi
+	VERSION_SEEN=1
+	if [ "$val" != "$MANIFEST_VERSION" ]; then
+		manifest_err "$lineno" "manifest version '$val' is not supported (this tool supports version $MANIFEST_VERSION)"
+	fi
+	return 0
+}
+
+# A key inside a [link] or [copy] section.
+parse_entry_key() {
+	local lineno="$1" key="$2" val="$3"
+	case "$key" in
+	source)
+		if [ -n "$CUR_SOURCE" ]; then
+			manifest_err "$lineno" "duplicate 'source' in this section"
+			return 0
+		fi
+		if [ -z "$val" ]; then
+			manifest_err "$lineno" "'source' is empty"
+			return 0
+		fi
+		case "$val" in
+		/*)
+			manifest_err "$lineno" "'source' must be relative to the store root: $val"
+			return 0
+			;;
+		esac
+		if path_has_dotdot "$val"; then
+			manifest_err "$lineno" "'source' must not contain '..': $val"
+			return 0
+		fi
+		CUR_SOURCE="$(norm_path "$val")"
+		;;
+	dest)
+		if [ -n "$CUR_DEST" ]; then
+			manifest_err "$lineno" "duplicate 'dest' in this section"
+			return 0
+		fi
+		case "$val" in
+		/*) ;;
+		*)
+			manifest_err "$lineno" "'dest' must start with '/' (the target root): $val"
+			return 0
+			;;
+		esac
+		if path_has_dotdot "$val"; then
+			manifest_err "$lineno" "'dest' must not contain '..': $val"
+			return 0
+		fi
+		val="$(norm_path "$val")"
+		if [ "$val" = "/" ]; then
+			manifest_err "$lineno" "'dest' must name a path inside the target root"
+			return 0
+		fi
+		CUR_DEST="$val"
+		;;
+	optional)
+		if [ -n "$CUR_OPTIONAL" ]; then
+			manifest_err "$lineno" "duplicate 'optional' in this section"
+			return 0
+		fi
+		case "$val" in
+		true | false) CUR_OPTIONAL="$val" ;;
+		*) manifest_err "$lineno" "'optional' must be true or false, not '$val'" ;;
+		esac
+		;;
+	version)
+		manifest_err "$lineno" "'version' must appear before the first section"
+		;;
+	*)
+		manifest_err "$lineno" "unknown key: $key (expected source, dest, or optional)"
+		;;
+	esac
+	return 0
+}
+
+# Two entries may share a source — one store file can feed two places — but never
+# a destination, and no destination may sit inside another one: linking a
+# directory and something under it has no defined result.
+check_entry_conflicts() {
+	local i j
+	for i in "${!E_DEST[@]}"; do
+		for j in "${!E_DEST[@]}"; do
+			if [ "$j" -le "$i" ]; then continue; fi
+			if [ "${E_DEST[$i]}" = "${E_DEST[$j]}" ]; then
+				manifest_err "${E_LINE[$j]}" "duplicate dest '${E_DEST[$j]}' (also at line ${E_LINE[$i]})"
+				continue
+			fi
+			case "${E_DEST[$j]}" in
+			"${E_DEST[$i]}"/*) manifest_err "${E_LINE[$j]}" "dest '${E_DEST[$j]}' is inside '${E_DEST[$i]}' (line ${E_LINE[$i]})" ;;
+			esac
+			case "${E_DEST[$i]}" in
+			"${E_DEST[$j]}"/*) manifest_err "${E_LINE[$i]}" "dest '${E_DEST[$i]}' is inside '${E_DEST[$j]}' (line ${E_LINE[$j]})" ;;
+			esac
+		done
+	done
+	return 0
+}
+
+# Read MANIFEST into the E_* arrays. Every problem is printed; the run stops
+# only at the end, so one pass shows the whole list.
+parse_manifest() {
+	local line key val sec lineno=0 skip_section=0
+	E_MODE=()
+	E_SOURCE=()
+	E_DEST=()
+	E_OPTIONAL=()
+	E_LINE=()
+	PARSE_ERRORS=0
+	VERSION_SEEN=0
+	CUR_SECTION=""
+	CUR_SOURCE=""
+	CUR_DEST=""
+	CUR_OPTIONAL=""
+	CUR_LINE=0
+
+	while IFS= read -r line || [ -n "$line" ]; do
+		lineno=$((lineno + 1))
+		line="$(trim "$line")"
+		if [ -z "$line" ]; then continue; fi
+		case "$line" in
+		'#'*) continue ;;
+		'['*']')
+			flush_entry
+			skip_section=0
+			sec="$(trim "${line#\[}")"
+			sec="$(trim "${sec%\]}")"
+			case "$sec" in
+			link | copy)
+				CUR_SECTION="$sec"
+				CUR_LINE="$lineno"
+				;;
+			*)
+				manifest_err "$lineno" "unknown directive: [$sec] (expected [link] or [copy])"
+				skip_section=1
+				;;
+			esac
+			;;
+		*'='*)
+			if [ "$skip_section" = 1 ]; then continue; fi
+			key="$(trim "${line%%=*}")"
+			val="$(trim "${line#*=}")"
+			if [ -z "$CUR_SECTION" ]; then
+				parse_preamble_key "$lineno" "$key" "$val"
+			else
+				parse_entry_key "$lineno" "$key" "$val"
+			fi
+			;;
+		*)
+			manifest_err "$lineno" "not a comment, a section, or a 'key = value' line"
+			;;
+		esac
+	done <"$MANIFEST"
+	flush_entry
+
+	if [ "$VERSION_SEEN" = 0 ]; then
+		manifest_err 1 "missing 'version = $MANIFEST_VERSION' before the first section"
+	fi
+	check_entry_conflicts
+
+	if [ "$PARSE_ERRORS" -gt 0 ]; then
+		die "$PARSE_ERRORS problem(s) in the manifest; nothing was changed"
+	fi
+	return 0
+}
+
 # --- Commands (filled in by later tasks) ------------------------------------
 cmd_apply() {
 	parse_options apply "$@"
