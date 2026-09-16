@@ -808,6 +808,85 @@ run_plan() {
 	return "$status"
 }
 
+# --- git ignore report -------------------------------------------------------
+#
+# Applied files are untracked by design, so they clutter "git status" until they
+# are ignored. The tool reports them and prints the command to fix it, but never
+# edits .gitignore (a tracked file) or the exclude file itself: that is git state
+# the user did not ask it to change.
+git_ignore_report() {
+	local i rel common q list rels=()
+	if ! git -C "$TARGET_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		return 0
+	fi
+	for i in "${!E_DEST[@]}"; do
+		rel="$(entry_rel "$i")"
+		if [ ! -e "$TARGET_ROOT/$rel" ] && [ ! -L "$TARGET_ROOT/$rel" ]; then continue; fi
+		if git -C "$TARGET_ROOT" check-ignore -q -- "$rel"; then continue; fi
+		rels+=("$rel")
+	done
+	if [ "${#rels[@]}" -eq 0 ]; then return 0; fi
+
+	common="$(git -C "$TARGET_ROOT" rev-parse --git-common-dir)"
+	case "$common" in
+	/*) ;;
+	*) common="$TARGET_ROOT/$common" ;;
+	esac
+
+	# Build the fix line with the paths already quoted, so it can be pasted as is.
+	q="'"
+	list=""
+	for rel in "${rels[@]}"; do list="$list $q/$rel$q"; done
+
+	printf '\nNot ignored by git:\n'
+	printf '  %s\n' "${rels[@]}"
+	printf '\nAdd them locally (not committed):\n'
+	printf '  printf %s%%s\\n%s%s >> %s/info/exclude\n' "$q" "$q" "$list" "$common"
+	return 0
+}
+
+# --- status -----------------------------------------------------------------
+
+# One word for what the target holds for entry I. The tool keeps no state, so
+# ownership is decided by looking at the path itself.
+classify_entry() {
+	local i="$1" src dest
+	src="$(entry_source "$i")"
+	dest="$(entry_dest "$i")"
+
+	if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+		if [ "${E_OPTIONAL[$i]}" = true ]; then printf 'skipped'; else printf 'stale-source'; fi
+		return 0
+	fi
+	if [ ! -d "$(dirname "$dest")" ]; then
+		printf 'no-parent'
+		return 0
+	fi
+	case "${E_MODE[$i]}" in
+	link)
+		if is_store_link "$dest" "$src"; then
+			printf 'ok'
+		elif [ -e "$dest" ] || [ -L "$dest" ]; then
+			printf 'foreign'
+		else
+			printf 'missing'
+		fi
+		;;
+	copy)
+		if [ -L "$dest" ]; then
+			printf 'foreign'
+		elif [ ! -e "$dest" ]; then
+			printf 'missing'
+		elif same_content "$src" "$dest"; then
+			printf 'ok'
+		else
+			printf 'drift'
+		fi
+		;;
+	esac
+	return 0
+}
+
 # --- Commands (filled in by later tasks) ------------------------------------
 cmd_apply() {
 	parse_options apply "$@"
@@ -831,13 +910,41 @@ cmd_apply() {
 
 	local rc=0
 	run_plan || rc=$?
+	git_ignore_report
 	exit "$rc"
 }
 
 cmd_status() {
 	parse_options status "$@"
 	require_store
-	die "not implemented yet"
+	if [ "${#ARGS[@]}" -gt 1 ]; then die "unexpected argument: ${ARGS[1]}"; fi
+	resolve_store "${ARGS[0]}"
+	resolve_target
+	parse_manifest
+
+	printf 'Store:  %s\n' "$STORE_ROOT"
+	printf 'Target: %s\n' "$TARGET_ROOT"
+	if [ "${#E_MODE[@]}" -eq 0 ]; then
+		printf 'The manifest has no entries.\n'
+		exit 0
+	fi
+	printf '\n'
+
+	local i state dest note rc=0
+	for i in "${!E_MODE[@]}"; do
+		state="$(classify_entry "$i")"
+		dest="$(entry_dest "$i")"
+		note=""
+		if [ -e "$dest$BAK_SUFFIX" ] || [ -L "$dest$BAK_SUFFIX" ]; then note="backup present"; fi
+		report "$state" "${E_DEST[$i]}" "$note"
+		case "$state" in
+		ok | skipped) ;;
+		*) rc=1 ;;
+		esac
+	done
+
+	git_ignore_report
+	exit "$rc"
 }
 
 cmd_diff() {
