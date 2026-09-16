@@ -18,7 +18,7 @@ aliases/       *.bash  → sourced from ~/.bashrc
 environment/   *.bash  → sourced from ~/.bashrc (PATH / env var exports)
 functions/     *.bash  → sourced from ~/.bashrc (shell functions)
 tools/         *.sh    → exposed as commands in ~/.local/bin/bash-tools
-.docs/dev/             → design specs for multi-file tools (not scanned by setup.sh)
+.docs/dev/             → design specs for tools complex enough to need one (not scanned)
 setup.sh               → the only entry point; installs/reconciles everything
 ```
 
@@ -154,6 +154,8 @@ which the scanner ignores. The entry script resolves its own real path with
 its assets from there. Such a tool still writes nothing into this repo — it operates on
 the user's working directory only.
 
-Each multi-file tool has a design spec in `.docs/dev/<name>.md` (e.g.
-`.docs/dev/meeting-notes.md`). Read it before changing the tool, and keep it updated when
-the tool's interface or behavior changes.
+A tool complex enough to warrant one keeps a design spec at `.docs/dev/<name>.md` — not
+only multi-file tools: `meeting-notes` has one because it is multi-file, and `dev-env` has
+one (`.docs/dev/dev-env.md`) despite being a single `tools/dev-env.sh` script. Read the
+relevant spec before changing such a tool, and keep it updated when the tool's interface or
+behavior changes.

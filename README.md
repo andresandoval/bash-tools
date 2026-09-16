@@ -285,7 +285,9 @@ Behavior worth knowing:
 - The run is all or nothing: the manifest, every source, and the target's directory
   structure are checked first. A missing parent directory is an error, and
   `--force-dir` is how you say "create it".
-- A file already in the way is moved to `<name>.dev-env.bak`, never deleted.
+- During `apply`, a file already in the way is moved to `<name>.dev-env.bak`, never
+  deleted. (`remove --force` is the exception: it deletes a drifted copy outright, with
+  no backup — run `dev-env diff` first if you are not sure.)
 - `link` entries are absolute symlinks. `copy` entries are real copies, for the cases
   a symlink does not survive (a Docker build context, a tool that rewrites the file).
   A copy that differs from the store is reported as drift and is never overwritten

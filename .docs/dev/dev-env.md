@@ -51,7 +51,8 @@ target.
    subdirectory of a worktree.
 3. The current directory, when it is not a git working tree.
 
-Every command prints the store and the target it resolved before it does anything.
+Most commands print the store and the target they resolved before doing anything else.
+`diff` never prints them, and `pull` prints them only once it has found something to do.
 
 **Store argument** — `STORE` is a path when it contains `/` or starts with `~`, `.` or `/`.
 Otherwise it is a name resolved under `$DEV_ENV_HOME` (default `~/Dev/environments`), so
@@ -189,6 +190,14 @@ once for confirmation, and then backs up each store version to `<source>.dev-env
 overwriting it. `--yes` (or `DEV_ENV_PULL=yes`) skips the prompt; `DEV_ENV_PULL=no` answers
 no.
 
+A `pull` replaces its own previous backup: an existing `<source>.dev-env.bak` is removed
+right before the new one is written, because it holds the store version from an earlier
+pull, not a user file. `apply` and `remove --restore` keep the ordinary refusal — there the
+backup holds something the user had in the way.
+
+A selected entry whose target `dest` is missing, or is a symlink (never a managed copy), is
+not pulled; it is listed under "Not pulled" with the reason, the same way `diff` reports it.
+
 **Duplicate source guard:** If two selected entries resolve to the same store file, `pull`
 exits 1 with `two entries pull into the same store file: <source>` and lists both target
 destinations. A single store file cannot accept two different target versions at once.
@@ -323,7 +332,7 @@ Add them locally (not committed):
 | `apply` | every entry applied or already `ok` | any error, or an entry left unapplied (drift without `--force`) | manifest has no entries |
 | `status` | every entry `ok` or `skipped` | any other classification, or an error | — |
 | `diff` | no differences | differences found | error (bad usage, unreadable file) |
-| `pull` | pulled, or nothing to pull | any error, or the prompt was answered no | — |
+| `pull` | pulled, or nothing to pull | any error, or the prompt was answered no | usage error (no entry matches, or a link entry was named) |
 | `remove` | removed what it owns | any error | — |
 | `adopt` | adopted | any error | — |
 
@@ -397,7 +406,13 @@ is the error code.
   still legal, because it mirrors the destination structure (e.g. `auth/service.env`).
 - **`adopt` refuses absolute paths outside the target root.** An absolute `PATH` that does
   not resolve inside the target is rejected instead of being reinterpreted as relative. This
-  catch mismatched stores and wrong targets early, when the command is typed.
+  catches mismatched stores and wrong targets early, when the command is typed.
+- **A symlinked directory cannot be used to escape a root.** A string prefix check (does the
+  path start with `$TARGET_ROOT`?) is not enough: a target holding, say,
+  `vendor -> /somewhere/outside` makes the resolved location different from what the
+  unresolved path spells. `apply`'s parent-directory check and `adopt`'s path validation both
+  resolve the existing parent directory with `readlink -f` and require it to be the target
+  root or a path under it, before any write.
 - **`adopt` refuses duplicate PATH arguments.** The same path cannot appear twice in one run
   (even with different syntax), because the all-or-nothing check is run before any move and
   a duplicate would only surface mid-move if it slipped past — a guarantee break.
