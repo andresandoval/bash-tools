@@ -170,6 +170,9 @@ Options:
   --yes              Do not ask for confirmation (also DEV_ENV_PULL=yes).
   --target DIR       Read from DIR instead of the detected target root.
 
+Exits 0 when pulled or when there was nothing to pull, 1 on any error or a
+"no" answer, 2 on a usage error (no entry matches, or a link entry was named).
+
 Examples:
   dev-env diff my-project && echo "no changes"
   dev-env pull my-project /scripts/seed.sh
@@ -340,6 +343,25 @@ norm_path() {
 path_has_dotdot() {
 	case "/$1/" in
 	*/../*) return 0 ;;
+	esac
+	return 1
+}
+
+# True when the existing directory DIR resolves — through any symlink in the
+# way — to ROOT or somewhere under it. A string-only "starts with $ROOT"
+# check is not enough: a symlinked directory component (e.g. a target holding
+# "vendor -> /somewhere/outside") makes the real, resolved location different
+# from what the unresolved path spells. Call this with the directory that
+# must stay contained (a dest's parent, or a to-be-adopted file's parent)
+# before any write that follows a path the target's directory structure
+# might have redirected.
+dir_contained() {
+	local root="$1" dir="$2" rd rroot
+	rd="$(readlink -f -- "$dir" 2>/dev/null)" || return 1
+	rroot="$(readlink -f -- "$root" 2>/dev/null)" || return 1
+	if [ -z "$rd" ] || [ -z "$rroot" ]; then return 1; fi
+	case "$rd" in
+	"$rroot" | "$rroot"/*) return 0 ;;
 	esac
 	return 1
 }
@@ -701,6 +723,10 @@ plan_apply() {
 				PLAN+=("skip")
 				continue
 			fi
+		elif ! dir_contained "$TARGET_ROOT" "$TARGET_ROOT$parent"; then
+			problems+=("parent directory of ${E_DEST[$i]} escapes the target root through a symlink: $parent")
+			PLAN+=("skip")
+			continue
 		fi
 
 		case "${E_MODE[$i]}" in
@@ -920,7 +946,7 @@ SELECTED=()
 select_entries() {
 	local want_mode="$1"
 	shift
-	local a i found
+	local a i matched
 	SELECTED=()
 	if [ "$#" -eq 0 ]; then
 		for i in "${!E_MODE[@]}"; do
@@ -929,23 +955,26 @@ select_entries() {
 		return 0
 	fi
 	for a in "$@"; do
-		found=0
+		# "matched" tracks whether this argument named any entry at all; it is
+		# separate from the per-entry dedup check below, so one argument that
+		# matches two different entries still selects both.
+		matched=0
 		for i in "${!E_MODE[@]}"; do
 			if [ "${E_DEST[$i]}" = "$a" ] || [ "${E_DEST[$i]}" = "/$a" ] || [ "${E_SOURCE[$i]}" = "$a" ]; then
 				if [ "${E_MODE[$i]}" != "$want_mode" ]; then
 					printf 'dev-env: a %s entry needs no %s: %s\n' "${E_MODE[$i]}" "$CMD" "${E_DEST[$i]}" >&2
 					exit 2
 				fi
+				matched=1
 				# Skip if already selected (same entry named twice).
-				local j
+				local already=0 j
 				for j in "${SELECTED[@]}"; do
-					if [ "$j" = "$i" ]; then found=1; break; fi
+					if [ "$j" = "$i" ]; then already=1; break; fi
 				done
-				if [ "$found" = 0 ]; then SELECTED+=("$i"); fi
-				found=1
+				if [ "$already" = 0 ]; then SELECTED+=("$i"); fi
 			fi
 		done
-		if [ "$found" = 0 ]; then
+		if [ "$matched" = 0 ]; then
 			printf 'dev-env: no entry matches: %s\n' "$a" >&2
 			exit 2
 		fi
@@ -1108,17 +1137,34 @@ cmd_pull() {
 	parse_manifest
 	select_entries copy "${ARGS[@]:1}"
 
-	local i src dest todo=()
+	local i src dest todo=() skip_notes=()
 	for i in ${SELECTED[@]+"${SELECTED[@]}"}; do
 		src="$(entry_source "$i")"
 		dest="$(entry_dest "$i")"
-		if [ ! -e "$dest" ] || [ -L "$dest" ]; then continue; fi
+		if [ -L "$dest" ]; then
+			skip_notes+=("${E_DEST[$i]}: is a symlink in the target, not a managed copy")
+			continue
+		fi
+		if [ ! -e "$dest" ]; then
+			skip_notes+=("${E_DEST[$i]}: missing in the target")
+			continue
+		fi
 		if [ -e "$src" ] && same_content "$src" "$dest"; then continue; fi
 		todo+=("$i")
 	done
 	if [ "${#todo[@]}" -eq 0 ]; then
-		printf 'Nothing to pull: every copied file matches the store.\n'
+		if [ "${#skip_notes[@]}" -eq 0 ]; then
+			printf 'Nothing to pull: every copied file matches the store.\n'
+		else
+			printf 'Nothing to pull:\n'
+			printf '  %s\n' "${skip_notes[@]}"
+		fi
 		exit 0
+	fi
+	if [ "${#skip_notes[@]}" -gt 0 ]; then
+		printf 'Not pulled:\n'
+		printf '  %s\n' "${skip_notes[@]}"
+		printf '\n'
 	fi
 
 	# Check for duplicate sources (same store file pulled from multiple targets).
@@ -1146,19 +1192,34 @@ cmd_pull() {
 	printf 'The current store version is kept as <name>%s.\n\n' "$BAK_SUFFIX"
 	confirm_or_exit "Pull these files into the store?"
 
-	# Check every backup path before moving anything, so the run is all or nothing.
+	# Check every store source before moving anything, so the run is all or
+	# nothing: a source that went missing after the plan above was printed must
+	# not be discovered mid-write, with some files already pulled.
 	for i in "${todo[@]}"; do
 		src="$(entry_source "$i")"
-		if ! backup_free "$src"; then
-			die "backup path already taken: ${E_SOURCE[$i]}$BAK_SUFFIX — move or delete it first"
+		if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+			die "missing in the store: ${E_SOURCE[$i]}"
 		fi
 	done
 
 	for i in "${todo[@]}"; do
 		src="$(entry_source "$i")"
 		dest="$(entry_dest "$i")"
-		mv -- "$src" "$src$BAK_SUFFIX"
-		cp -R -p -- "$dest" "$src"
+		# The backup here (if any) is the store version from an immediately
+		# earlier pull, not a user file, so this pull replaces it rather than
+		# refusing — unlike apply/remove --restore, where a backup holds a file
+		# the user had in the way.
+		if [ -e "$src$BAK_SUFFIX" ] || [ -L "$src$BAK_SUFFIX" ]; then
+			if ! rm -rf -- "$src$BAK_SUFFIX"; then
+				die "could not remove the previous backup: ${E_SOURCE[$i]}$BAK_SUFFIX"
+			fi
+		fi
+		if ! mv -- "$src" "$src$BAK_SUFFIX"; then
+			die "could not back up the store version: ${E_SOURCE[$i]}"
+		fi
+		if ! cp -R -p -- "$dest" "$src"; then
+			die "could not copy the target version into the store: ${E_SOURCE[$i]}"
+		fi
 		report pulled "${E_SOURCE[$i]}"
 	done
 	exit 0
@@ -1248,19 +1309,36 @@ cmd_adopt() {
 	*) die "--mode must be link or copy, not '$OPT_MODE'" ;;
 	esac
 
-	local store_path
+	# Resolve where the store lives without creating anything yet: a typo in a
+	# PATH further down must not leave a phantom store (or manifest) behind.
+	# The directory and the manifest are created just before the write loop,
+	# once every path has been validated.
+	local store_path need_store_dir=0 need_manifest=0
 	store_path="$(store_path_for "${ARGS[0]}")"
 	if [ ! -e "$store_path" ]; then
-		mkdir -p -- "$store_path"
-		printf 'Created store: %s\n' "$store_path"
+		need_store_dir=1
+		need_manifest=1
+		STORE_ROOT="$(readlink -f -- "$store_path")"
+		MANIFEST="$STORE_ROOT/$MANIFEST_NAME"
+		E_MODE=()
+		E_SOURCE=()
+		E_DEST=()
+		E_OPTIONAL=()
+		E_LINE=()
+	elif [ -d "$store_path" ] && [ ! -f "$store_path/$MANIFEST_NAME" ]; then
+		need_manifest=1
+		STORE_ROOT="$(cd "$store_path" && pwd -P)"
+		MANIFEST="$STORE_ROOT/$MANIFEST_NAME"
+		E_MODE=()
+		E_SOURCE=()
+		E_DEST=()
+		E_OPTIONAL=()
+		E_LINE=()
+	else
+		resolve_store "${ARGS[0]}"
 	fi
-	if [ -d "$store_path" ] && [ ! -f "$store_path/$MANIFEST_NAME" ]; then
-		printf 'version = %s\n' "$MANIFEST_VERSION" >"$store_path/$MANIFEST_NAME"
-		printf 'Created manifest: %s/%s\n' "$store_path" "$MANIFEST_NAME"
-	fi
-	resolve_store "${ARGS[0]}"
 	resolve_target
-	parse_manifest
+	if [ "$need_manifest" = 0 ]; then parse_manifest; fi
 
 	# Check every path first: adopt moves files, so a failure halfway through
 	# would leave the target in pieces.
@@ -1280,6 +1358,9 @@ cmd_adopt() {
 		abs="$TARGET_ROOT/$rel"
 		if [ ! -e "$abs" ] && [ ! -L "$abs" ]; then die "not found in the target: $rel"; fi
 		if [ -L "$abs" ]; then die "already a symlink, nothing to adopt: $rel"; fi
+		if ! dir_contained "$TARGET_ROOT" "$(dirname -- "$abs")"; then
+			die "not inside the target root (a parent directory is a symlink out of it): $a"
+		fi
 		dest="/$rel"
 		for i in "${!E_DEST[@]}"; do
 			if [ "${E_DEST[$i]}" = "$dest" ]; then die "already in the manifest: $dest (line ${E_LINE[$i]})"; fi
@@ -1302,6 +1383,19 @@ cmd_adopt() {
 		names+=("$name")
 		dests+=("$dest")
 	done
+
+	# Every path checked out: only now do we touch the store, so a bad PATH
+	# above never leaves a phantom store or manifest behind.
+	if [ "$need_store_dir" = 1 ]; then
+		if ! mkdir -p -- "$STORE_ROOT"; then die "could not create the store: $STORE_ROOT"; fi
+		printf 'Created store: %s\n' "$STORE_ROOT"
+	fi
+	if [ "$need_manifest" = 1 ]; then
+		if ! printf 'version = %s\n' "$MANIFEST_VERSION" >"$MANIFEST"; then
+			die "could not create the manifest: $MANIFEST"
+		fi
+		printf 'Created manifest: %s\n' "$MANIFEST"
+	fi
 
 	printf 'Store:  %s\n' "$STORE_ROOT"
 	printf 'Target: %s\n\n' "$TARGET_ROOT"
