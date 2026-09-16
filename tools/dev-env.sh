@@ -913,7 +913,12 @@ select_entries() {
 					printf 'dev-env: a %s entry needs no %s: %s\n' "${E_MODE[$i]}" "$CMD" "${E_DEST[$i]}" >&2
 					exit 2
 				fi
-				SELECTED+=("$i")
+				# Skip if already selected (same entry named twice).
+				local j
+				for j in "${SELECTED[@]}"; do
+					if [ "$j" = "$i" ]; then found=1; break; fi
+				done
+				if [ "$found" = 0 ]; then SELECTED+=("$i"); fi
 				found=1
 			fi
 		done
@@ -1039,7 +1044,10 @@ cmd_diff() {
 		else
 			diff -u --label "store/${E_SOURCE[$i]}" --label "target${E_DEST[$i]}" -- "$src" "$dest" || one=$?
 		fi
-		if [ "$one" -ge 2 ]; then die "diff failed for ${E_DEST[$i]}"; fi
+		if [ "$one" -ge 2 ]; then
+			printf 'dev-env: diff failed for %s\n' "${E_DEST[$i]}" >&2
+			exit 2
+		fi
 		if [ "$one" -eq 1 ]; then rc=1; fi
 	done
 	exit "$rc"
@@ -1066,6 +1074,22 @@ cmd_pull() {
 		exit 0
 	fi
 
+	# Check for duplicate sources (same store file pulled from multiple targets).
+	local i1 i2 src1 src2
+	for ((i1=0; i1<${#todo[@]}; i1++)); do
+		src1="$(entry_source "${todo[$i1]}")"
+		for ((i2=i1+1; i2<${#todo[@]}; i2++)); do
+			src2="$(entry_source "${todo[$i2]}")"
+			if [ "$src1" = "$src2" ]; then
+				printf 'dev-env: two entries pull into the same store file: %s\n' "$src1" >&2
+				printf '  %s\n' "${E_DEST[${todo[$i1]}]}" >&2
+				printf '  %s\n' "${E_DEST[${todo[$i2]}]}" >&2
+				printf 'Pull one of them at a time.\n' >&2
+				exit 1
+			fi
+		done
+	done
+
 	printf 'Store:  %s\n' "$STORE_ROOT"
 	printf 'Target: %s\n\n' "$TARGET_ROOT"
 	printf 'These store files will be replaced with the target version:\n'
@@ -1086,7 +1110,6 @@ cmd_pull() {
 	for i in "${todo[@]}"; do
 		src="$(entry_source "$i")"
 		dest="$(entry_dest "$i")"
-		rm -f -- "$src$BAK_SUFFIX"
 		mv -- "$src" "$src$BAK_SUFFIX"
 		cp -R -p -- "$dest" "$src"
 		report pulled "${E_SOURCE[$i]}"
