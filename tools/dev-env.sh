@@ -595,11 +595,243 @@ parse_manifest() {
 	return 0
 }
 
+# --- Target resolution ------------------------------------------------------
+
+# Where the links go: --target when given, else the git worktree root (so the
+# tool works from a subdirectory of a checkout), else the current directory —
+# the target does not have to be a repository at all.
+resolve_target() {
+	local top
+	if [ -n "$OPT_TARGET" ]; then
+		if [ ! -d "$OPT_TARGET" ]; then die "target directory not found: $OPT_TARGET"; fi
+		TARGET_ROOT="$(cd "$OPT_TARGET" && pwd -P)"
+	elif top="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ]; then
+		TARGET_ROOT="$(cd "$top" && pwd -P)"
+	else
+		TARGET_ROOT="$(pwd -P)"
+	fi
+	return 0
+}
+
+# --- Entry helpers ----------------------------------------------------------
+
+entry_source() { printf '%s/%s' "$STORE_ROOT" "${E_SOURCE[$1]}"; }
+entry_dest() { printf '%s%s' "$TARGET_ROOT" "${E_DEST[$1]}"; }
+entry_rel() { printf '%s' "${E_DEST[$1]#/}"; }
+
+# True when DEST is a symlink that resolves to SRC — the only way the tool knows
+# a path is its own, since it keeps no state file.
+is_store_link() {
+	local dest="$1" src="$2"
+	if [ ! -L "$dest" ]; then return 1; fi
+	[ "$(readlink -f -- "$dest" 2>/dev/null)" = "$(readlink -f -- "$src" 2>/dev/null)" ]
+}
+
+# True when the store version and the target version hold the same bytes.
+same_content() {
+	local src="$1" dest="$2"
+	if [ -d "$src" ]; then
+		if [ ! -d "$dest" ]; then return 1; fi
+		diff -rq -- "$src" "$dest" >/dev/null 2>&1
+	else
+		if [ ! -f "$dest" ]; then return 1; fi
+		cmp -s -- "$src" "$dest"
+	fi
+}
+
+# True when nothing occupies the backup path yet. A second backup would hide a
+# leftover from an earlier run, so the tool refuses instead.
+backup_free() {
+	if [ -e "$1$BAK_SUFFIX" ] || [ -L "$1$BAK_SUFFIX" ]; then return 1; fi
+	return 0
+}
+
+report() { printf '  %-9s %s%s\n' "$1" "$2" "${3:+  ($3)}"; }
+
+# --- apply ------------------------------------------------------------------
+#
+# Planning is separate from writing so the run is all or nothing: every blocker
+# is collected first and printed together, and the target is untouched when one
+# is found. --dry-run is then just "print the plan and stop".
+
+PLAN=()
+MKDIRS=()
+
+plan_apply() {
+	local i src dest parent problems=()
+	PLAN=()
+	MKDIRS=()
+
+	case "${OSTYPE:-}" in
+	msys* | cygwin*)
+		for i in "${!E_MODE[@]}"; do
+			if [ "${E_MODE[$i]}" = link ]; then
+				problems+=("'ln -s' is unreliable in this shell (MSYS/Cygwin); use 'mode = copy' entries there")
+				break
+			fi
+		done
+		;;
+	esac
+
+	for i in "${!E_MODE[@]}"; do
+		src="$(entry_source "$i")"
+		dest="$(entry_dest "$i")"
+
+		if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+			if [ "${E_OPTIONAL[$i]}" = true ]; then
+				PLAN+=("skip")
+			else
+				problems+=("missing in the store: ${E_SOURCE[$i]} (line ${E_LINE[$i]})")
+				PLAN+=("skip")
+			fi
+			continue
+		fi
+
+		parent="$(dirname "${E_DEST[$i]}")"
+		if [ ! -d "$TARGET_ROOT$parent" ]; then
+			if [ "$OPT_FORCE_DIR" = 1 ]; then
+				MKDIRS+=("$parent")
+			else
+				problems+=("no such directory in the target: $parent (needed by ${E_DEST[$i]}) — pass --force-dir to create it")
+				PLAN+=("skip")
+				continue
+			fi
+		fi
+
+		case "${E_MODE[$i]}" in
+		link)
+			if is_store_link "$dest" "$src"; then
+				PLAN+=("ok")
+			elif [ -e "$dest" ] || [ -L "$dest" ]; then
+				if backup_free "$dest"; then
+					PLAN+=("backup+link")
+				else
+					problems+=("backup path already taken: ${E_DEST[$i]}$BAK_SUFFIX — move or delete it first")
+					PLAN+=("skip")
+				fi
+			else
+				PLAN+=("link")
+			fi
+			;;
+		copy)
+			if [ -L "$dest" ]; then
+				# A symlink is never a managed copy, so treat it as an obstacle.
+				if backup_free "$dest"; then
+					PLAN+=("backup+copy")
+				else
+					problems+=("backup path already taken: ${E_DEST[$i]}$BAK_SUFFIX — move or delete it first")
+					PLAN+=("skip")
+				fi
+			elif [ ! -e "$dest" ]; then
+				PLAN+=("copy")
+			elif same_content "$src" "$dest"; then
+				PLAN+=("ok")
+			elif [ "$OPT_FORCE" = 1 ]; then
+				if backup_free "$dest"; then
+					PLAN+=("backup+copy")
+				else
+					problems+=("backup path already taken: ${E_DEST[$i]}$BAK_SUFFIX — move or delete it first")
+					PLAN+=("skip")
+				fi
+			else
+				PLAN+=("drift")
+			fi
+			;;
+		esac
+	done
+
+	if [ "${#problems[@]}" -gt 0 ]; then
+		printf '\ndev-env: cannot apply this store\n' >&2
+		printf '  - %s\n' "${problems[@]}" >&2
+		printf '\nNothing was changed.\n' >&2
+		exit 1
+	fi
+	return 0
+}
+
+# Execute PLAN. Returns 1 when an entry was left unapplied, so the caller can
+# exit non-zero: the target does not match the store when that happens.
+run_plan() {
+	local i src dest rel action status=0 d seen=""
+	if [ "${#MKDIRS[@]}" -gt 0 ]; then
+		for d in "${MKDIRS[@]}"; do
+			# Two entries may need the same parent; report it once.
+			case "$seen" in
+			*"|$d|"*) continue ;;
+			esac
+			seen="$seen|$d|"
+			if [ "$OPT_DRY_RUN" != 1 ]; then mkdir -p -- "$TARGET_ROOT$d"; fi
+			report mkdir "$d"
+		done
+	fi
+
+	for i in "${!PLAN[@]}"; do
+		action="${PLAN[$i]}"
+		src="$(entry_source "$i")"
+		dest="$(entry_dest "$i")"
+		rel="${E_DEST[$i]}"
+		case "$action" in
+		ok)
+			report ok "$rel"
+			;;
+		skip)
+			report skipped "$rel" "optional source missing: ${E_SOURCE[$i]}"
+			;;
+		drift)
+			report drift "$rel" "differs from the store; run 'dev-env diff', 'dev-env pull', or apply --force"
+			status=1
+			;;
+		*)
+			if [ "$OPT_DRY_RUN" = 1 ]; then
+				report "${action}" "$rel"
+				continue
+			fi
+			case "$action" in
+			backup+*)
+				mv -- "$dest" "$dest$BAK_SUFFIX"
+				report backup "$rel" "kept as $(basename "$rel")$BAK_SUFFIX"
+				;;
+			esac
+			case "$action" in
+			*link)
+				ln -s -- "$src" "$dest"
+				report linked "$rel"
+				;;
+			*copy)
+				cp -R -p -- "$src" "$dest"
+				report copied "$rel"
+				;;
+			esac
+			;;
+		esac
+	done
+	return "$status"
+}
+
 # --- Commands (filled in by later tasks) ------------------------------------
 cmd_apply() {
 	parse_options apply "$@"
 	require_store
-	die "not implemented yet"
+	if [ "${#ARGS[@]}" -gt 1 ]; then die "unexpected argument: ${ARGS[1]}"; fi
+	resolve_store "${ARGS[0]}"
+	resolve_target
+	parse_manifest
+
+	printf 'Store:  %s\n' "$STORE_ROOT"
+	printf 'Target: %s\n' "$TARGET_ROOT"
+	if [ "${#E_MODE[@]}" -eq 0 ]; then
+		printf 'The manifest has no entries; nothing to do.\n'
+		exit 2
+	fi
+	if [ ! -w "$TARGET_ROOT" ]; then die "target is not writable: $TARGET_ROOT"; fi
+
+	plan_apply
+	if [ "$OPT_DRY_RUN" = 1 ]; then printf '\ndry run — nothing will be changed\n'; fi
+	printf '\n'
+
+	local rc=0
+	run_plan || rc=$?
+	exit "$rc"
 }
 
 cmd_status() {
