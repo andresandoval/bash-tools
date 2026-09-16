@@ -67,7 +67,7 @@ _dev_env_dests() {
 }
 
 _dev_env_complete() {
-	local cur prev cmd flags i positionals=0 store_word
+	local cur prev cmd flags i positionals=0 store_word=""
 	cur="${COMP_WORDS[COMP_CWORD]}"
 	prev="${COMP_WORDS[COMP_CWORD - 1]}"
 	COMPREPLY=()
