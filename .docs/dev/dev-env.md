@@ -199,7 +199,7 @@ Delete what this store owns in the target.
 
 - A `link` entry whose `dest` is a symlink resolving to this store's `source` is removed.
 - A `copy` entry whose `dest` is identical to the store version is removed.
-- A drifted copy is **kept** and reported as "differs from the store", unless `--force`.
+- A drifted copy is **kept** and reported as differs from the store, unless `--force`.
   Run `diff` or `pull` first. With `--force`, it is removed and reported with the note
   `--force: content differed from the store`.
 - Anything else is kept and reported as foreign. The tool never deletes what it does not own.
@@ -217,8 +217,7 @@ them back. This is how a store is built the first time.
   must be inside the target root; absolute paths outside it are rejected with `not inside
   the target root: <path>`.
 - Duplicate `PATH` arguments in a single run are rejected with `given twice in one run: <path>`.
-  The same check prevents the same store name from being used twice, so two adopted files
-  stay separate.
+  A separate check rejects two paths that would use the same store name with `two paths would use the same store name: <name>`. The second check cannot trigger through the current interface: `--as` takes only one `PATH`, and every store name mirrors its own path, so different paths always produce different names. It remains as a guard for a future option that lets multiple paths choose their own store names.
 - The default store name mirrors the path: `/auth/.env` → `auth/.env`, `/.env` → `.env`.
   `--as NAME` sets a flat name instead (`auth-service.env`), and is allowed only with exactly
   one `PATH`. The `NAME` is validated with the same rules as manifest `source`: relative
