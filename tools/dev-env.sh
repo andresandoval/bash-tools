@@ -1237,6 +1237,15 @@ cmd_adopt() {
 	# would leave the target in pieces.
 	local a i rel abs dest name rels=() names=() dests=()
 	for a in "${ARGS[@]:1}"; do
+		case "$a" in
+		/*)
+			case "$a" in
+			"$TARGET_ROOT"/*) ;;
+			*) die "not inside the target root: $a" ;;
+			esac
+			;;
+		esac
+
 		rel="$(adopt_rel "$a")"
 		if [ -z "$rel" ] || path_has_dotdot "$rel"; then die "not a path inside the target: $a"; fi
 		abs="$TARGET_ROOT/$rel"
@@ -1247,9 +1256,19 @@ cmd_adopt() {
 			if [ "${E_DEST[$i]}" = "$dest" ]; then die "already in the manifest: $dest (line ${E_LINE[$i]})"; fi
 		done
 		name="${OPT_AS:-$rel}"
+		if [ -z "$name" ]; then die "--as needs a name"; fi
+		case "$name" in
+		/*) die "--as must be a name inside the store, not an absolute path: $name" ;;
+		esac
+		if path_has_dotdot "$name"; then die "--as must not contain '..': $name"; fi
+		name="$(norm_path "$name")"
 		if [ -e "$STORE_ROOT/$name" ] || [ -L "$STORE_ROOT/$name" ]; then
 			die "already in the store: $name — pass --as NAME to store it under another name"
 		fi
+		for i in "${!rels[@]}"; do
+			if [ "${rels[$i]}" = "$rel" ]; then die "given twice in one run: $rel"; fi
+			if [ "${names[$i]}" = "$name" ]; then die "two paths would use the same store name: $name"; fi
+		done
 		rels+=("$rel")
 		names+=("$name")
 		dests+=("$dest")
