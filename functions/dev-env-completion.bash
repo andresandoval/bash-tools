@@ -17,6 +17,36 @@ _dev_env_stores() {
 	done
 }
 
+# Directory paths, handling spaces with the read pattern and trailing slashes
+# so tab drilling continues.
+_dev_env_target_dirs() {
+	local d matches=()
+	while IFS= read -r d; do
+		matches+=("$d/")
+	done < <(compgen -d -- "$1")
+	COMPREPLY=("${matches[@]}")
+	if [ "${#COMPREPLY[@]}" -gt 0 ]; then
+		compopt -o nospace 2>/dev/null || true
+	fi
+}
+
+# File paths for adopt, handling spaces with the read pattern and adding
+# trailing slashes for directories so tab drilling continues.
+_dev_env_adopt_files() {
+	local f matches=()
+	while IFS= read -r f; do
+		if [ -d "$f" ]; then
+			matches+=("$f/")
+		else
+			matches+=("$f")
+		fi
+	done < <(compgen -f -- "$1")
+	COMPREPLY=("${matches[@]}")
+	if [ "${#COMPREPLY[@]}" -gt 0 ]; then
+		compopt -o nospace 2>/dev/null || true
+	fi
+}
+
 # The dest values of a store's manifest, so diff/pull can complete an entry.
 _dev_env_dests() {
 	local arg="$1" path manifest
@@ -37,7 +67,7 @@ _dev_env_dests() {
 }
 
 _dev_env_complete() {
-	local cur prev cmd flags i positionals=0
+	local cur prev cmd flags i positionals=0 store_word
 	cur="${COMP_WORDS[COMP_CWORD]}"
 	prev="${COMP_WORDS[COMP_CWORD - 1]}"
 	COMPREPLY=()
@@ -52,7 +82,7 @@ _dev_env_complete() {
 	# Option values first: they are not positional arguments.
 	case "$prev" in
 	--target)
-		COMPREPLY=($(compgen -d -- "$cur"))
+		_dev_env_target_dirs "$cur"
 		return 0
 		;;
 	--mode)
@@ -64,13 +94,15 @@ _dev_env_complete() {
 		;;
 	esac
 
+	# Per-command flags, with shared tail factored.
+	local tail="--target --help --version"
 	case "$cmd" in
-	apply) flags="--force-dir --dry-run --force --target --help" ;;
-	status) flags="--target --help" ;;
-	diff) flags="--target --help" ;;
-	pull) flags="--yes --target --help" ;;
-	remove) flags="--restore --force --target --help" ;;
-	adopt) flags="--as --mode --target --help" ;;
+	apply) flags="--force-dir --dry-run --force $tail" ;;
+	status) flags="$tail" ;;
+	diff) flags="$tail" ;;
+	pull) flags="--yes $tail" ;;
+	remove) flags="--restore --force $tail" ;;
+	adopt) flags="--as --mode $tail" ;;
 	*) flags="--help" ;;
 	esac
 
@@ -79,31 +111,45 @@ _dev_env_complete() {
 		return 0
 	fi
 
-	# Count the positional words before the cursor, so word 2 is the store no
-	# matter how many options were typed before it.
+	# Count the positional words before the cursor, and record the store word.
+	# The store is the first non-option word after the command, regardless of
+	# where options appear in the command line.
 	for ((i = 2; i < COMP_CWORD; i++)); do
 		case "${COMP_WORDS[i]}" in
 		-*) ;;
 		*)
 			case "${COMP_WORDS[i - 1]}" in
 			--target | --as | --mode) ;;
-			*) positionals=$((positionals + 1)) ;;
+			*)
+				if [ -z "$store_word" ]; then
+					store_word="${COMP_WORDS[i]}"
+				fi
+				positionals=$((positionals + 1))
+				;;
 			esac
 			;;
 		esac
 	done
 
 	if [ "$positionals" -eq 0 ]; then
-		COMPREPLY=($(compgen -W "$(_dev_env_stores)" -- "$cur") $(compgen -d -- "$cur"))
+		# Complete store names and directory paths, handling spaces in paths.
+		COMPREPLY=($(compgen -W "$(_dev_env_stores)" -- "$cur"))
+		local d
+		while IFS= read -r d; do
+			COMPREPLY+=("$d/")
+		done < <(compgen -d -- "$cur")
+		if [ "${#COMPREPLY[@]}" -gt 0 ]; then
+			compopt -o nospace 2>/dev/null || true
+		fi
 		return 0
 	fi
 
 	case "$cmd" in
 	diff | pull)
-		COMPREPLY=($(compgen -W "$(_dev_env_dests "${COMP_WORDS[2]}")" -- "$cur"))
+		COMPREPLY=($(compgen -W "$(_dev_env_dests "$store_word")" -- "$cur"))
 		;;
 	adopt)
-		COMPREPLY=($(compgen -f -- "$cur"))
+		_dev_env_adopt_files "$cur"
 		;;
 	*)
 		COMPREPLY=($(compgen -W "$flags" -- "$cur"))
