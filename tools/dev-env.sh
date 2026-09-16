@@ -620,11 +620,16 @@ entry_dest() { printf '%s%s' "$TARGET_ROOT" "${E_DEST[$1]}"; }
 entry_rel() { printf '%s' "${E_DEST[$1]#/}"; }
 
 # True when DEST is a symlink that resolves to SRC — the only way the tool knows
-# a path is its own, since it keeps no state file.
+# a path is its own, since it keeps no state file. Fails closed: if either side
+# cannot be canonicalized (a dangling symlink), that is never a match, since
+# "" = "" would otherwise say every pair of dangling links is the same link.
 is_store_link() {
-	local dest="$1" src="$2"
+	local dest="$1" src="$2" rd rs
 	if [ ! -L "$dest" ]; then return 1; fi
-	[ "$(readlink -f -- "$dest" 2>/dev/null)" = "$(readlink -f -- "$src" 2>/dev/null)" ]
+	rd="$(readlink -f -- "$dest" 2>/dev/null)" || return 1
+	rs="$(readlink -f -- "$src" 2>/dev/null)" || return 1
+	if [ -z "$rd" ] || [ -z "$rs" ]; then return 1; fi
+	[ "$rd" = "$rs" ]
 }
 
 # True when the store version and the target version hold the same bytes.
@@ -646,7 +651,7 @@ backup_free() {
 	return 0
 }
 
-report() { printf '  %-9s %s%s\n' "$1" "$2" "${3:+  ($3)}"; }
+report() { printf '  %-13s %s%s\n' "$1" "$2" "${3:+  ($3)}"; }
 
 # --- apply ------------------------------------------------------------------
 #
@@ -760,7 +765,13 @@ run_plan() {
 			*"|$d|"*) continue ;;
 			esac
 			seen="$seen|$d|"
-			if [ "$OPT_DRY_RUN" != 1 ]; then mkdir -p -- "$TARGET_ROOT$d"; fi
+			if [ "$OPT_DRY_RUN" != 1 ]; then
+				if ! mkdir -p -- "$TARGET_ROOT$d"; then
+					report failed "$d" "could not create the directory"
+					status=1
+					continue
+				fi
+			fi
 			report mkdir "$d"
 		done
 	fi
@@ -788,17 +799,29 @@ run_plan() {
 			fi
 			case "$action" in
 			backup+*)
-				mv -- "$dest" "$dest$BAK_SUFFIX"
+				if ! mv -- "$dest" "$dest$BAK_SUFFIX"; then
+					report failed "$rel" "could not back up the existing path"
+					status=1
+					continue
+				fi
 				report backup "$rel" "kept as $(basename "$rel")$BAK_SUFFIX"
 				;;
 			esac
 			case "$action" in
 			*link)
-				ln -s -- "$src" "$dest"
+				if ! ln -s -- "$src" "$dest"; then
+					report failed "$rel" "could not create the link"
+					status=1
+					continue
+				fi
 				report linked "$rel"
 				;;
 			*copy)
-				cp -R -p -- "$src" "$dest"
+				if ! cp -R -p -- "$src" "$dest"; then
+					report failed "$rel" "could not copy the file"
+					status=1
+					continue
+				fi
 				report copied "$rel"
 				;;
 			esac
@@ -1160,7 +1183,10 @@ cmd_remove() {
 
 		case "${E_MODE[$i]}" in
 		link)
-			if is_store_link "$dest" "$src"; then
+			if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+				report kept "$rel" "the store source is gone (${E_SOURCE[$i]}); nothing to compare"
+				rc=1
+			elif is_store_link "$dest" "$src"; then
 				rm -- "$dest"
 				report removed "$rel"
 			elif [ -e "$dest" ] || [ -L "$dest" ]; then
@@ -1176,7 +1202,10 @@ cmd_remove() {
 				rc=1
 			elif [ ! -e "$dest" ]; then
 				report absent "$rel"
-			elif [ -e "$src" ] && same_content "$src" "$dest"; then
+			elif [ ! -e "$src" ] && [ ! -L "$src" ]; then
+				report kept "$rel" "the store source is gone (${E_SOURCE[$i]}); nothing to compare"
+				rc=1
+			elif same_content "$src" "$dest"; then
 				rm -rf -- "$dest"
 				report removed "$rel"
 			elif [ "$OPT_FORCE" = 1 ]; then
