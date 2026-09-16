@@ -330,6 +330,7 @@ norm_path() {
 	while [ "$p" != "${p//\/\//\/}" ]; do p="${p//\/\//\/}"; done
 	while [ "$p" != "${p//\/.\//\/}" ]; do p="${p//\/.\//\/}"; done
 	p="${p%/.}"
+	if [ -z "$p" ]; then p="/"; fi
 	if [ "${#p}" -gt 1 ]; then p="${p%/}"; fi
 	printf '%s' "$p"
 }
