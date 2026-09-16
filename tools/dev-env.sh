@@ -1157,7 +1157,7 @@ cmd_remove() {
 				report removed "$rel"
 			elif [ "$OPT_FORCE" = 1 ]; then
 				rm -rf -- "$dest"
-				report removed "$rel" "discarded local changes"
+				report removed "$rel" "--force: content differed from the store"
 			else
 				report kept "$rel" "differs from the store; run 'dev-env diff' or remove --force"
 				rc=1
