@@ -347,6 +347,43 @@ path_has_dotdot() {
 	return 1
 }
 
+# Split PATH at the deepest part of it that exists: EXISTING_DIR is the closest
+# ancestor directory (PATH itself when PATH is already a directory) and
+# MISSING_TAIL is the part that is not there yet, empty when nothing is missing.
+# This walks the path as a string on purpose. `readlink -f` gives up as soon as
+# more than the last component is missing, and under `set -e` an assignment from
+# it ends the run with no message at all. A caller that must canonicalize a path
+# that does not exist yet enters EXISTING_DIR and joins MISSING_TAIL back on; a
+# caller that must check containment before a mkdir checks EXISTING_DIR, because
+# everything the mkdir creates lands under it.
+EXISTING_DIR=""
+MISSING_TAIL=""
+split_existing() {
+	local p
+	p="$(norm_path "$1")"
+	MISSING_TAIL=""
+	while [ ! -d "$p" ]; do
+		case "$p" in
+		/ | .)
+			# There is nothing above these to walk to.
+			break
+			;;
+		*/*)
+			MISSING_TAIL="${p##*/}${MISSING_TAIL:+/$MISSING_TAIL}"
+			p="${p%/*}"
+			if [ -z "$p" ]; then p="/"; fi
+			;;
+		*)
+			# A bare name: it is relative, so the current directory comes next.
+			MISSING_TAIL="$p${MISSING_TAIL:+/$MISSING_TAIL}"
+			p="."
+			;;
+		esac
+	done
+	EXISTING_DIR="$p"
+	return 0
+}
+
 # True when the existing directory DIR resolves — through any symlink in the
 # way — to ROOT or somewhere under it. A string-only "starts with $ROOT"
 # check is not enough: a symlinked directory component (e.g. a target holding
@@ -715,19 +752,23 @@ plan_apply() {
 		fi
 
 		parent="$(dirname "${E_DEST[$i]}")"
-		if [ ! -d "$TARGET_ROOT$parent" ]; then
-			if [ "$OPT_FORCE_DIR" = 1 ]; then
-				MKDIRS+=("$parent")
-			else
-				problems+=("no such directory in the target: $parent (needed by ${E_DEST[$i]}) — pass --force-dir to create it")
-				PLAN+=("skip")
-				continue
-			fi
-		elif ! dir_contained "$TARGET_ROOT" "$TARGET_ROOT$parent"; then
+		if [ ! -d "$TARGET_ROOT$parent" ] && [ "$OPT_FORCE_DIR" != 1 ]; then
+			problems+=("no such directory in the target: $parent (needed by ${E_DEST[$i]}) — pass --force-dir to create it")
+			PLAN+=("skip")
+			continue
+		fi
+		# The parent must stay inside the target root. Under --force-dir it does
+		# not exist yet, so the check runs on the deepest part of it that does:
+		# everything "mkdir -p" creates lands under that directory, so when it is
+		# already outside the root (a symlinked component in the way), so is every
+		# write below it. When the parent exists, this is the parent itself.
+		split_existing "$TARGET_ROOT$parent"
+		if ! dir_contained "$TARGET_ROOT" "$EXISTING_DIR"; then
 			problems+=("parent directory of ${E_DEST[$i]} escapes the target root through a symlink: $parent")
 			PLAN+=("skip")
 			continue
 		fi
+		if [ ! -d "$TARGET_ROOT$parent" ]; then MKDIRS+=("$parent"); fi
 
 		case "${E_MODE[$i]}" in
 		link)
@@ -1313,12 +1354,24 @@ cmd_adopt() {
 	# PATH further down must not leave a phantom store (or manifest) behind.
 	# The directory and the manifest are created just before the write loop,
 	# once every path has been validated.
-	local store_path need_store_dir=0 need_manifest=0
+	local store_path real_store need_store_dir=0 need_manifest=0
 	store_path="$(store_path_for "${ARGS[0]}")"
 	if [ ! -e "$store_path" ]; then
 		need_store_dir=1
 		need_manifest=1
-		STORE_ROOT="$(readlink -f -- "$store_path")"
+		# Nothing of the store is there yet, and its parents may be missing too:
+		# DEV_ENV_HOME defaults to ~/Dev/environments, which is not there on a
+		# new machine. Canonicalize the deepest existing part of the path and join
+		# the missing tail back on. The directory itself is still created only
+		# after every PATH is validated, further down.
+		split_existing "$store_path"
+		if ! real_store="$(cd -- "$EXISTING_DIR" 2>/dev/null && pwd -P)"; then
+			die "cannot create a store there: $store_path"
+		fi
+		STORE_ROOT="$real_store"
+		if [ -n "$MISSING_TAIL" ]; then
+			STORE_ROOT="$(norm_path "$STORE_ROOT/$MISSING_TAIL")"
+		fi
 		MANIFEST="$STORE_ROOT/$MANIFEST_NAME"
 		E_MODE=()
 		E_SOURCE=()
@@ -1388,6 +1441,13 @@ cmd_adopt() {
 	# above never leaves a phantom store or manifest behind.
 	if [ "$need_store_dir" = 1 ]; then
 		if ! mkdir -p -- "$STORE_ROOT"; then die "could not create the store: $STORE_ROOT"; fi
+		# It exists now, so canonicalize it for real: the links written below hold
+		# this path, and it must carry no symlinked or ".." component.
+		if ! real_store="$(cd -- "$STORE_ROOT" 2>/dev/null && pwd -P)"; then
+			die "could not enter the store: $STORE_ROOT"
+		fi
+		STORE_ROOT="$real_store"
+		MANIFEST="$STORE_ROOT/$MANIFEST_NAME"
 		printf 'Created store: %s\n' "$STORE_ROOT"
 	fi
 	if [ "$need_manifest" = 1 ]; then

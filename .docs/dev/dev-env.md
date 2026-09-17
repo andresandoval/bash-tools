@@ -243,7 +243,9 @@ them back. This is how a store is built the first time.
 - It refuses when the `dest` is already in the manifest, or when the store `source` path is
   already taken.
 - It creates the store directory and a `version = 1` manifest when they do not exist, and
-  says so.
+  says so. Missing parent directories of the store path are created as well, so the first
+  run on a new machine works with the default `DEV_ENV_HOME`. The store is created only
+  after every `PATH` has been checked, so a run that fails validation leaves none behind.
 - The new block is appended to the end of the manifest, after a blank line.
 
 ## Runtime behavior
@@ -412,7 +414,10 @@ is the error code.
   `vendor -> /somewhere/outside` makes the resolved location different from what the
   unresolved path spells. `apply`'s parent-directory check and `adopt`'s path validation both
   resolve the existing parent directory with `readlink -f` and require it to be the target
-  root or a path under it, before any write.
+  root or a path under it, before any write. Under `--force-dir` the parent does not exist
+  yet, so the check runs on the closest ancestor that does: everything `mkdir -p` creates
+  lands under that ancestor, so an ancestor outside the root means the write is outside the
+  root too.
 - **`adopt` refuses duplicate PATH arguments.** The same path cannot appear twice in one run
   (even with different syntax), because the all-or-nothing check is run before any move and
   a duplicate would only surface mid-move if it slipped past — a guarantee break.
