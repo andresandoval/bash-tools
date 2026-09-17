@@ -678,17 +678,28 @@ entry_source() { printf '%s/%s' "$STORE_ROOT" "${E_SOURCE[$1]}"; }
 entry_dest() { printf '%s%s' "$TARGET_ROOT" "${E_DEST[$1]}"; }
 entry_rel() { printf '%s' "${E_DEST[$1]#/}"; }
 
-# True when DEST is a symlink that resolves to SRC — the only way the tool knows
-# a path is its own, since it keeps no state file. Fails closed: if either side
-# cannot be canonicalized (a dangling symlink), that is never a match, since
-# "" = "" would otherwise say every pair of dangling links is the same link.
+# True when DEST is a symlink that stands for SRC — the only way the tool knows
+# a path is its own, since it keeps no state file. Both sides are resolved first.
+# When only one of them resolves, that is never a match: "" = "" would otherwise
+# say every pair of dangling links is the same link. When NEITHER resolves, the
+# link text is compared with the store path instead. That case is a store source
+# which is a symlink into a share that is not mounted yet — apply is allowed to
+# link it, so status and remove must recognize the link it made. An unrelated
+# dangling link in the target is still refused, because its text is some other
+# path, not this store's source.
 is_store_link() {
-	local dest="$1" src="$2" rd rs
+	local dest="$1" src="$2" rd rs lit
 	if [ ! -L "$dest" ]; then return 1; fi
-	rd="$(readlink -f -- "$dest" 2>/dev/null)" || return 1
-	rs="$(readlink -f -- "$src" 2>/dev/null)" || return 1
-	if [ -z "$rd" ] || [ -z "$rs" ]; then return 1; fi
-	[ "$rd" = "$rs" ]
+	rd="$(readlink -f -- "$dest" 2>/dev/null)" || rd=""
+	rs="$(readlink -f -- "$src" 2>/dev/null)" || rs=""
+	if [ -n "$rd" ] && [ -n "$rs" ]; then
+		if [ "$rd" = "$rs" ]; then return 0; fi
+		return 1
+	fi
+	if [ -n "$rd" ] || [ -n "$rs" ]; then return 1; fi
+	lit="$(readlink -- "$dest" 2>/dev/null)" || return 1
+	if [ "$lit" = "$src" ]; then return 0; fi
+	return 1
 }
 
 # True when the store version and the target version hold the same bytes.
@@ -1285,17 +1296,20 @@ cmd_remove() {
 
 		case "${E_MODE[$i]}" in
 		link)
-			if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+			if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+				report absent "$rel"
+			elif [ ! -e "$src" ] && [ ! -L "$src" ]; then
+				# Something is at the dest and the store has nothing left to
+				# compare it with, so it is kept — the copy arm below does the
+				# same, and in the same order.
 				report kept "$rel" "the store source is gone (${E_SOURCE[$i]}); nothing to compare"
 				rc=1
 			elif is_store_link "$dest" "$src"; then
 				rm -- "$dest"
 				report removed "$rel"
-			elif [ -e "$dest" ] || [ -L "$dest" ]; then
+			else
 				report kept "$rel" "not owned by this store"
 				rc=1
-			else
-				report absent "$rel"
 			fi
 			;;
 		copy)

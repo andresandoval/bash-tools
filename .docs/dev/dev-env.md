@@ -208,6 +208,11 @@ Delete what this store owns in the target.
 
 - A `link` entry whose `dest` is a symlink resolving to this store's `source` is removed.
 - A `copy` entry whose `dest` is identical to the store version is removed.
+- An entry with nothing at its `dest` is reported `absent`. That is not a failure: a store
+  that was never applied, or an optional entry that was skipped, still exits 0.
+- An entry whose store `source` is gone, with something still at the `dest`, is **kept**
+  with the note `the store source is gone`. Nothing is left to compare the target file
+  with, so `--force` does not delete it either.
 - A drifted copy is **kept** and reported as differing from the store, unless `--force`.
   Run `diff` or `pull` first. With `--force`, it is removed and reported with the note
   `--force: content differed from the store`.
@@ -306,6 +311,12 @@ One per entry, in manifest order:
   file, a directory, or a link elsewhere; or a copy entry whose `dest` is a symlink.
 - `stale-source` — the `source` is gone from the store (`skipped` when the entry is optional).
 - `no-parent` — the parent directory of `dest` does not exist in the target.
+
+A `link` is owned when both sides resolve to the same path. When neither side resolves —
+a store `source` that is itself a symlink into a share that is not mounted yet — the link
+text is compared with the store path instead, so a link `apply` made still reads `ok` and
+`remove` still takes it away. A dangling link the tool did not make stays `foreign`,
+because its text is some other path.
 
 `backup` is appended to the line when `<dest>.dev-env.bak` exists.
 
