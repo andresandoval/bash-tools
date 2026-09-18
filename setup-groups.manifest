@@ -1,0 +1,18 @@
+# bash-tools selector grouping.
+#
+# This file is optional. It only changes where an item appears in the setup.sh
+# selector: a file listed under a group moves next to that group's file and is
+# shown indented. Every item keeps its own checkbox and its own enabled state,
+# so grouping never enables or disables anything on its own.
+#
+# A "[path]" line opens a group and the lines under it are its children. Paths
+# are relative to the repository root. Blank lines and lines starting with "#"
+# are ignored; there are no inline comments. Groups cannot be nested.
+#
+# Remove an entry, or delete this file, to get the plain folder order back.
+
+[tools/dev-env.sh]
+functions/dev-env-completion.bash
+
+[tools/meeting-notes.sh]
+functions/meeting-notes-completion.bash

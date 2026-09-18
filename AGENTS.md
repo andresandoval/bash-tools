@@ -20,6 +20,7 @@ functions/     *.bash  → sourced from ~/.bashrc (shell functions)
 tools/         *.sh    → exposed as commands in ~/.local/bin/bash-tools
 .docs/dev/             → design specs for tools complex enough to need one (not scanned)
 setup.sh               → the only entry point; installs/reconciles everything
+setup-groups.manifest  → optional; groups related items in the setup.sh selector
 ```
 
 - Files in `aliases/`, `environment/`, and `functions/` are **sourced** into the shell.
@@ -56,6 +57,17 @@ Key behaviors to understand before changing anything:
 - **Selection UI.** Prefers `whiptail`, then `dialog`, then a built-in text-based
   selector. Missing UI dependencies are *never auto-installed*; the script prints an
   install hint for the detected package manager and falls back to the text selector.
+- **Selector grouping.** The optional `setup-groups.manifest` at the repository root
+  moves a file next to a related one in the selector instead of leaving it in plain
+  folder order. `load_groups_manifest` reads it; `build_checklist_options` collects the
+  rows in the natural order and then prints a claimed child under its parent, prefixed
+  with `CHILD_PREFIX` (`  \_ `); `parse_selected_items` strips that prefix again. The
+  prefix is plain ASCII on purpose — whiptail sizes its tag column by bytes, so a
+  multi-byte glyph such as `└─` shifts that row's second column. Grouping is **display
+  only**: every item keeps its own checkbox and its own enabled state, and no selection,
+  symlink, or managed-file behavior depends on the manifest. Unknown paths, duplicate
+  claims, self-references, and nested groups are reported with `warn` and skipped, so a
+  bad manifest degrades to the plain order instead of failing the run.
 - **Tools: symlink vs wrapper.** On Linux/macOS each enabled tool is a symlink into
   `tools/`. On Windows (Git Bash / MSYS / Cygwin), where `ln -s` often silently copies,
   a small wrapper script is written instead (marked with `# bash-tools managed wrapper`
@@ -78,6 +90,12 @@ After running, open a new shell or `source ~/.bashrc`.
 1. Add a `*.sh` file to `tools/` with a `#!/usr/bin/env bash` shebang.
 2. Make it executable: `chmod +x tools/your-tool.sh` (also commit the executable bit).
 3. Run `./setup.sh` and select it. The command name will be the filename minus `.sh`.
+
+**A group in the selector (optional):**
+1. Add a `[<parent path>]` section to `setup-groups.manifest` and list the repo-relative
+   paths that belong under it, one per line.
+2. Both paths must already exist in the repository; only one level of nesting is allowed.
+3. Re-run `./setup.sh`. Nothing else changes: grouping only moves and indents the row.
 
 **A post-setup hint for any of the above:**
 1. Create a sibling Markdown file named after the full filename plus `.hint`
@@ -144,6 +162,7 @@ When creating Git commits, follow these rules:
 | `tools/meeting-notes.sh` | command `meeting-notes` | capture meeting notes as clean Markdown under a freeform path + tree search UI, in any dir; takes a subcommand (`add`/`delete`/`rename`/`retitle`/`rebuild`) |
 | `tools/meeting-notes/` | assets (not a command) | `lib/` Python helpers + `web/` UI template for `meeting-notes` |
 | `tools/dev-env.sh` | command `dev-env` | apply a central store of environment files (`.env`, config folders) to any checkout/worktree/directory from a manifest; takes a subcommand (`apply`/`status`/`diff`/`pull`/`remove`/`adopt`) |
+| `setup-groups.manifest` | selector metadata (not selectable) | optional grouping for the `setup.sh` selector; without it the order is plain folder order |
 
 ### Multi-file tools
 

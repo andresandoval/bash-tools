@@ -11,6 +11,9 @@ set -euo pipefail
 #   environment/   *.bash files sourced from ~/.bashrc
 #   tools/         *.sh files exposed as commands through symlinks
 #
+# An optional setup-groups.manifest at the repository root groups related files
+# together in the selector. See load_groups_manifest below.
+#
 # Persistent state is stored only in:
 #
 #   ~/.bashrc
@@ -50,6 +53,15 @@ readonly ENVIRONMENT_DIR="${REPO_ROOT}/environment"
 readonly FUNCTIONS_DIR="${REPO_ROOT}/functions"
 readonly TOOLS_DIR="${REPO_ROOT}/tools"
 
+# Optional manifest that groups related files in the selector. When it is absent
+# the selector order is exactly the natural folder order.
+readonly GROUPS_MANIFEST_FILE="${REPO_ROOT}/setup-groups.manifest"
+
+# Display prefix for a grouped child row in the selector. Plain ASCII on purpose:
+# whiptail sizes its tag column by bytes, so a multi-byte glyph would shift the
+# second column of that row. The prefix is stripped again in parse_selected_items.
+readonly CHILD_PREFIX='  \_ '
+
 # Global arrays populated during execution.
 declare -a CURRENT_ALIAS_FILES=()
 declare -a CURRENT_ENVIRONMENT_FILES=()
@@ -62,6 +74,12 @@ declare -a PREVIOUS_ENABLED_TOOLS=()
 
 declare -a SELECTED_SOURCES=()
 declare -a SELECTED_TOOLS=()
+
+# Selector grouping, read from GROUPS_MANIFEST_FILE. CHILD_PARENT maps a child
+# path to its parent path. PARENT_CHILDREN maps a parent path to its children,
+# one per line, in manifest order.
+declare -A CHILD_PARENT=()
+declare -A PARENT_CHILDREN=()
 
 # ------------------------------------------------------------------------------
 # Basic logging helpers.
@@ -161,6 +179,118 @@ load_current_files() {
     mapfile -t CURRENT_TOOL_FILES < <(
         find "${TOOLS_DIR}" -maxdepth 1 -type f -name '*.sh' -printf '%f\n' | sort
     )
+}
+
+# ------------------------------------------------------------------------------
+# Read the optional selector grouping manifest.
+#
+# The manifest lets related files sit next to each other in the selector, for
+# example a completion file under the tool it completes:
+#
+#   [tools/dev-env.sh]
+#   functions/dev-env-completion.bash
+#
+# A "[path]" line opens a group and the lines after it are its children. Paths
+# are repository relative. Blank lines and lines starting with "#" are ignored;
+# there are no inline comments. Only one level of nesting is supported.
+#
+# Grouping is display only. Every item keeps its own checkbox and its own
+# enabled state, so nothing about enable or disable behavior depends on this
+# file. An entry that does not match a file in the current inventory is reported
+# and skipped, so a renamed or deleted file can never break a run. When the file
+# is absent, the selector order is the natural folder order.
+# ------------------------------------------------------------------------------
+
+load_groups_manifest() {
+    CHILD_PARENT=()
+    PARENT_CHILDREN=()
+
+    [[ -f "${GROUPS_MANIFEST_FILE}" ]] || return 0
+
+    local -a inventory=()
+    mapfile -t inventory < <(current_inventory)
+
+    local -a pair_parents=()
+    local -a pair_children=()
+    local -A declared_parents=()
+
+    local line
+    local parent=""
+    local line_number=0
+
+    # First pass: collect the raw parent/child pairs, and remember every declared
+    # parent so the second pass can reject a group nested inside a group.
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        line_number=$((line_number + 1))
+
+        # Trim leading and trailing whitespace.
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+
+        [[ -z "${line}" || "${line}" == '#'* ]] && continue
+
+        if [[ "${line}" == '['* ]]; then
+            parent=""
+
+            if [[ "${line}" != *']' || "${#line}" -le 2 ]]; then
+                warn "${GROUPS_MANIFEST_FILE}:${line_number}: malformed group header, skipping: ${line}"
+                continue
+            fi
+
+            parent="${line:1:${#line}-2}"
+            declared_parents["${parent}"]=1
+            continue
+        fi
+
+        if [[ -z "${parent}" ]]; then
+            warn "${GROUPS_MANIFEST_FILE}:${line_number}: entry outside a group, skipping: ${line}"
+            continue
+        fi
+
+        pair_parents+=("${parent}")
+        pair_children+=("${line}")
+    done < "${GROUPS_MANIFEST_FILE}"
+
+    # Second pass: keep only the pairs that are safe to render.
+    local -A reported_parents=()
+    local index
+    local child
+
+    for index in "${!pair_children[@]}"; do
+        parent="${pair_parents[index]}"
+        child="${pair_children[index]}"
+
+        if ! array_contains "${parent}" "${inventory[@]}"; then
+            if [[ -z "${reported_parents[${parent}]:-}" ]]; then
+                reported_parents["${parent}"]=1
+                warn "Grouping manifest names an unknown group, skipping it: ${parent}"
+            fi
+            continue
+        fi
+
+        if ! array_contains "${child}" "${inventory[@]}"; then
+            warn "Grouping manifest names an unknown entry, skipping it: ${child}"
+            continue
+        fi
+
+        if [[ "${child}" == "${parent}" ]]; then
+            warn "Grouping manifest lists an entry under itself, skipping it: ${child}"
+            continue
+        fi
+
+        if [[ -n "${CHILD_PARENT[${child}]:-}" ]]; then
+            warn "Grouping manifest lists ${child} more than once, keeping it under ${CHILD_PARENT[${child}]}"
+            continue
+        fi
+
+        if [[ -n "${declared_parents[${child}]:-}" ]]; then
+            warn "Grouping manifest nests a group inside a group, skipping it: ${child}"
+            continue
+        fi
+
+        CHILD_PARENT["${child}"]="${parent}"
+        PARENT_CHILDREN["${parent}"]+="${child}"$'\n'
+    done
 }
 
 # ------------------------------------------------------------------------------
@@ -390,9 +520,17 @@ display_change_alerts() {
 # Each option is represented as:
 #
 #   tag description default_state
+#
+# Rows are collected in the natural folder order first. A row claimed as a child
+# by the grouping manifest is then moved out of that order and printed directly
+# under its parent, with CHILD_PREFIX in front of its tag. The prefix is display
+# only; parse_selected_items strips it again.
 # ------------------------------------------------------------------------------
 
 build_checklist_options() {
+    local -a natural_order=()
+    local -A row_by_tag=()
+
     local file
     local tag
     local state
@@ -405,7 +543,8 @@ build_checklist_options() {
             state="ON"
         fi
 
-        printf '%s\t%s\t%s\n' "${tag}" "source from ~/.bashrc" "${state}"
+        natural_order+=("${tag}")
+        row_by_tag["${tag}"]="source from ~/.bashrc"$'\t'"${state}"
     done
 
     for file in "${CURRENT_ENVIRONMENT_FILES[@]}"; do
@@ -416,7 +555,8 @@ build_checklist_options() {
             state="ON"
         fi
 
-        printf '%s\t%s\t%s\n' "${tag}" "source from ~/.bashrc" "${state}"
+        natural_order+=("${tag}")
+        row_by_tag["${tag}"]="source from ~/.bashrc"$'\t'"${state}"
     done
 
     for file in "${CURRENT_FUNCTION_FILES[@]}"; do
@@ -427,7 +567,8 @@ build_checklist_options() {
             state="ON"
         fi
 
-        printf '%s\t%s\t%s\n' "${tag}" "source from ~/.bashrc" "${state}"
+        natural_order+=("${tag}")
+        row_by_tag["${tag}"]="source from ~/.bashrc"$'\t'"${state}"
     done
 
     for file in "${CURRENT_TOOL_FILES[@]}"; do
@@ -438,7 +579,22 @@ build_checklist_options() {
             state="ON"
         fi
 
-        printf '%s\t%s\t%s\n' "${tag}" "symlink as ${file%.sh}" "${state}"
+        natural_order+=("${tag}")
+        row_by_tag["${tag}"]="symlink as ${file%.sh}"$'\t'"${state}"
+    done
+
+    local child
+
+    for tag in "${natural_order[@]}"; do
+        # A child is printed by its parent, not in its own natural position.
+        [[ -n "${CHILD_PARENT[${tag}]:-}" ]] && continue
+
+        printf '%s\t%s\n' "${tag}" "${row_by_tag[${tag}]}"
+
+        while IFS= read -r child; do
+            [[ -n "${child}" ]] || continue
+            printf '%s%s\t%s\n' "${CHILD_PREFIX}" "${child}" "${row_by_tag[${child}]}"
+        done <<< "${PARENT_CHILDREN[${tag}]:-}"
     done
 }
 
@@ -585,6 +741,10 @@ parse_selected_items() {
 
     # whiptail usually returns quoted items. Remove quotes to simplify parsing.
     raw_output="${raw_output//\"/}"
+
+    # Grouped child rows carry an indent prefix for display only. Remove it so
+    # the tags read back as plain repository paths.
+    raw_output="${raw_output//"${CHILD_PREFIX}"/}"
 
     local item
     for item in ${raw_output}; do
@@ -881,6 +1041,7 @@ main() {
     mkdir -p "${TOOLS_BIN_DIR}"
 
     load_current_files
+    load_groups_manifest
     load_previous_state
 
     print_available_files

@@ -25,6 +25,7 @@ For agent-specific contributor guidance, see [`AGENTS.md`](AGENTS.md).
 ```
 bash-tools/
 ├── setup.sh                  # the only entry point; installs and reconciles everything
+├── setup-groups.manifest     # optional; groups related items in the setup.sh selector
 ├── aliases/                  # *.bash -- sourced from ~/.bashrc
 │   ├── common-alias.bash
 │   └── gnome-alias.bash
@@ -35,8 +36,10 @@ bash-tools/
 │   └── wsl-terminal.bash
 ├── .docs/
 │   └── dev/                  # design specs for multi-file tools (not scanned by setup.sh)
+│       ├── dev-env.md
 │       └── meeting-notes.md
 ├── functions/                # *.bash -- sourced from ~/.bashrc (shell functions)
+│   ├── dev-env-completion.bash
 │   ├── git-navigation.bash
 │   ├── maven-build.bash
 │   └── meeting-notes-completion.bash
@@ -46,6 +49,7 @@ bash-tools/
     ├── cleanup-old-kernels.sh
     ├── compare-copy.sh
     ├── copy-realpath.sh
+    ├── dev-env.sh
     ├── git-prune-local.sh
     ├── git-list-merged-branches.sh
     ├── nvidia-prime-run.sh
@@ -117,6 +121,37 @@ source ~/.bashrc
 
 Re-run `./setup.sh` any time you add files, remove files, or want to change the selection.
 It is idempotent.
+
+### Grouping related items in the selector
+
+By default the selector lists everything in folder order, so a tool and its completion
+function end up far apart. The optional `setup-groups.manifest` at the repository root
+moves a file next to the one it belongs to and shows it indented:
+
+```ini
+[tools/dev-env.sh]
+functions/dev-env-completion.bash
+
+[tools/meeting-notes.sh]
+functions/meeting-notes-completion.bash
+```
+
+```
+[ ] tools/dev-env.sh                              symlink as dev-env
+[ ]   \_ functions/dev-env-completion.bash        source from ~/.bashrc
+[*] tools/meeting-notes.sh                        symlink as meeting-notes
+[*]   \_ functions/meeting-notes-completion.bash  source from ~/.bashrc
+```
+
+A `[path]` line opens a group and the lines under it are its children. Paths are
+relative to the repository root. Blank lines and lines starting with `#` are ignored;
+there are no inline comments. Groups cannot be nested.
+
+This is **display only**. Every item keeps its own checkbox and its own enabled state,
+so checking or unchecking a group's file never changes its children. An entry that does
+not match a file in the repository is reported and skipped, so a renamed or deleted file
+cannot break a run. Delete the file, or an entry in it, to get the plain folder order
+back.
 
 ### Optional checklist UI
 
@@ -371,3 +406,4 @@ provide a usage/help block, and commit using Conventional Commits with a scope
 | 2026-08-21 | `meeting-notes`: the five operations are now **subcommands** instead of mode flags — `meeting-notes add PATH`, `delete PATH`, `rename OLD NEW`, `retitle PATH TEXT`, `rebuild` — so an operation (a bare word) no longer looks like a parameter (`--flag`). Hard cut-over: the old `--add`/`--delete`/`--rename`/`--retitle`/`--rebuild` forms (and `--add=`/`--delete=`) fail as `unknown option`, naming the invocation that replaces them and pointing at `--help`. Help is per command (`meeting-notes <command> --help`), options may precede or follow a command's positional arguments, and the frontmatter value passed to `refront.py` now uses the `--label=TEXT` form so a title starting with `-` is accepted. Completion dispatches on the command word |
 | 2026-09-02 | Add `functions/maven-build.bash`: the `mvnb MODULE [MVN_ARG...]` command builds and installs one module of a Maven multimodule project together with its dependencies (`mvn -pl MODULE -am clean install -DskipTests`). Run it from the reactor root; it refuses to run where there is no `pom.xml`, and where the first argument is an option instead of a module. Extra arguments are appended to Maven unchanged, so `-DskipTests=false` turns the tests back on. It prints the command before running it, calls `./mvnw` when the project has an executable one, and tab-completes module names from the `<module>` entries of `./pom.xml` |
 | 2026-09-16 | Add `dev-env` tool: a central store of environment files (`.env` files, config folders, seed scripts) is described once in a `.manifest` and applied to any checkout, git worktree, or plain directory. `apply` creates absolute symlinks (or real copies for `[copy]` entries) after an all-or-nothing preflight that checks the manifest, every source, and the target's directory structure; `--force-dir` seeds missing directories and a file in the way is kept as `<name>.dev-env.bak`. `status` classifies every entry (ok / missing / drift / foreign / stale-source / no-parent), `diff` and `pull` carry changes to copied files back into the store, `remove` unlinks only what the store owns, and `adopt` moves existing files into the store and links them back. Applied paths that git does not ignore are reported with the command to fix it; nothing is ever written into the bash-tools repo. Tab completion in `functions/dev-env-completion.bash` |
+| 2026-09-18 | `setup.sh`: optional `setup-groups.manifest` groups related items in the selector. A file listed under `[parent/path]` moves next to that parent and is shown indented with a `\_` prefix, so a tool and its completion function are no longer separated by folder order. Grouping is display only — every item keeps its own checkbox and its own enabled state — and entries naming a file that is not in the repository are reported and skipped. Without the file the selector order is unchanged |
