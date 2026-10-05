@@ -148,6 +148,7 @@ When creating Git commits, follow these rules:
 | `environment/wsl-terminal.bash` | sourced | WSL: dynamic tab title + Windows Terminal same-dir tab/pane duplication |
 | `environment/wsl-terminal.bash.hint` | hint (not selectable) | Windows Terminal settings printed by `setup.sh` after runs with `wsl-terminal.bash` enabled |
 | `functions/git-navigation.bash` | sourced | worktree-aware navigation: `goto-git-root`, `goto-git-main`, `goto-git-worktree` (+ its completion) |
+| `functions/claude-pr.bash` | sourced | `claude-pr NUMBER [CLAUDE_ARG...]` -- start a Claude Code session for one PR in its own worktree (`claude --worktree "#NUMBER" --name "PR #NUMBER"`) |
 | `functions/maven-build.bash` | sourced | `mvnb MODULE [MVN_ARG...]` -- build/install one Maven module with its dependencies (+ its completion) |
 | `functions/meeting-notes-completion.bash` | sourced | tab-completion for the `meeting-notes` command |
 | `functions/dev-env-completion.bash` | sourced | tab-completion for the `dev-env` command |
